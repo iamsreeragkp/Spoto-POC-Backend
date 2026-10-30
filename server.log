@@ -1,0 +1,7 @@
+
+> sporto-poc-backend@1.0.0 start
+> node src/server.js
+
+◇ injected env (2) from .env
+◇ injected env (0) from .env
+API listening on http://localhost:4000

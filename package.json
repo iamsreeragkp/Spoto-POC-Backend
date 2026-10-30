@@ -1,0 +1,22 @@
+{
+  "name": "sporto-poc-backend",
+  "version": "1.0.0",
+  "description": "POC backend for football player scouting reports",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "db:migrate": "node scripts/migrate.js",
+    "db:seed": "node scripts/seed.js",
+    "db:fill-gaps": "node scripts/fill-gaps.js",
+    "db:setup": "node scripts/migrate.js && node scripts/seed.js && node scripts/fill-gaps.js"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.9",
+    "express": "^5.3.0",
+    "pg": "^8.23.1",
+    "xlsx": "^0.18.5"
+  }
+}
