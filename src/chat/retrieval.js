@@ -19,7 +19,7 @@ const cfg = () => ({
   floor: num(process.env.CHAT_MEANING_FLOOR, 0.4),
   tagFloor: num(process.env.CHAT_MEANING_TAG_FLOOR, 0.45),
   verify: String(process.env.CHAT_MEANING_VERIFY ?? 'true').toLowerCase() !== 'false'
-    && String(process.env.CHAT_ALLOW_COMMENT_LLM ?? 'true').toLowerCase() !== 'false',
+    && String(process.env.CHAT_ALLOW_COMMENT_LLM ?? 'false').toLowerCase() === 'true',
 });
 
 const cache = new Map(); // key -> { exp, v }

@@ -43,18 +43,21 @@ SPEC RULES
    "profile" everything about one named player ("tell me about Player 12", "what have scouts said about him?") – put the name(s) in players;
    "compare" 2-5 named players side by side – put the names in players.
    "top N" / "highest" / "best by score" = list with sort + limit, not aggregate.
-2. filters are ANDed. Only add filters the user actually asked for (never invent e.g. "overall_score gte 1"). Text fields: op "eq" for exact values from the lists above, "contains" for partial matches. Numbers: gt/gte/lt/lte/eq. Dates: YYYY-MM-DD with gte/lt for ranges ("in 2025" -> report_date gte 2025-01-01 and lt 2026-01-01). value is always a string.
+2. filters are ANDed. The examples below are illustrations: never copy a filter from an EXAMPLE into an unrelated question (this does NOT apply to earlier turns of the conversation: follow-ups keep their earlier conditions, see rule 14). Only add filters the user actually asked for (never invent e.g. "overall_score gte 1"). Text fields: op "eq" for exact values from the lists above, "contains" for partial matches. Numbers: gt/gte/lt/lte/eq. Dates: YYYY-MM-DD with gte/lt for ranges ("in 2025" -> report_date gte 2025-01-01 and lt 2026-01-01). value is always a string.
+2a. A phrase the user quotes or names (a label, nickname or club note such as "JL Top 18 in Denmark") that is NOT in the REAL VALUES lists is free text written by scouts: use text (fields ["any"], any_of = the phrase), never a filter value. recommendation, stage_of_growth, strong_foot and age_group only accept values copied from their lists. If the phrase matches a list value apart from spelling, case or punctuation ("Golden Boy" ~ "Golden-boy!!!"), use that list value as a filter. A position filter is only for a playing position named in the question (use the list wording): never put a skill word such as speed or a nickname into position.
 3. Position: spell "centre-back" (British). "Center back" with no side -> position contains "centre-back". Midfielders are "No. 8 (central midfielder)" etc. – use contains with a distinctive part.
 4. tags: each entry = one category with any_of tag strings copied EXACTLY from the lists above (OR within an entry). Use tags when a concept maps cleanly to a tag ("speed" -> physical "Pace/speed").
 5. text = KEYWORD search (exact words, stemmed). any_of = short words/stems or phrases (e.g. "dribbl" matches dribbling/dribbler; "agility" also matches agile). fields: x_factor, comment, technical, physical, mental, tactical, deadball or any. Use it when the user names a word ("where is the word agility mentioned") or for x-factor values.
    X-FACTOR questions ("X as x-factor", "whose x-factor is X") use ONLY text with fields ["x_factor"] – no tags, no meaning, content_scope "latest".
    "The word X" / "X is mentioned" questions use ONLY text (fields ["any"]), content_scope "all" – no tags, no meaning.
-6. meaning = MEANING search over what scouts wrote, for open concepts that can be phrased many ways ("shows leadership", "moves with the ball", "good in the air", "poor attitude") when the user does NOT name a specific field or exact word. query = ONE sentence the way a scout would write it ("He is a natural leader who organises and commands his teammates"). fields: comment, x_factor, tags or any. For such concept questions use meaning AND add tags/keywords only if they clearly mean the same thing (e.g. "Natural leader" for leadership, "Strong attacking heading" for good in the air – not loosely related skills), with content_logic "any". Do not use meaning for numeric/structured questions or when a tag alone answers it ("players with speed" -> tag only).
+6. meaning = MEANING search over what scouts wrote, for open concepts that can be phrased many ways ("shows leadership", "moves with the ball", "good in the air", "poor attitude") when the user does NOT name a specific field or exact word. query = ONE sentence the way a scout would write it ("He is a natural leader who organises and commands his teammates"). fields: comment, x_factor, tags or any. For such concept questions use meaning AND add tags/keywords only if they clearly mean the same thing (e.g. "Natural leader" for leadership, "Strong attacking heading" for good in the air – not loosely related skills), with content_logic "any". Do not use meaning for numeric/structured questions or when a tag alone answers it ("players with speed" -> tag only). If a tag in the list names the concept, use the tag ALONE and leave meaning null, even when the question is phrased descriptively ("consistently shows great results with speed" -> the speed tag only). Never AND a tag with a meaning sentence that merely restates it.
 7. content_logic: "all" when every tag/text/meaning condition must hold; "any" when they are alternative ways to express the same idea.
 8. content_scope: "all" when the question is about what scouts have mentioned/written/said (any report, ever) – the default for text and meaning searches; "latest" for current attributes ("players who have speed", "x-factor is dribbling") and whenever the user says latest/current.
 9. near: {place, max_minutes} for driving distance ("within 1 hour from Ikast" -> {"place":"Ikast","max_minutes":60}). Do not also filter on location.
 10. players: exact player names the question is about (from the question or the conversation). For a specific individual ("him", "her", "that player", "the second one") use the names shown in the conversation context. Leave empty otherwise – "them/those/these players" refers to the whole previous result, which is a follow-up (rule 14), NOT a list of the names shown.
 11. History: "scouted 3+ times" -> report_count gte 3; "improved"/"went up" -> score_change gt 0 (sort score_change desc); "declined" -> score_change lt 0; "first scouted in 2024" -> first_report_date range.
+12a. Age: "under N years old", "U<N>", "younger than N" -> age_group gte (current year - N + 1), using Today's date from the question message (age_group is the birth year; a player is under N when born after current year - N). Do not guess a single birth year.
+12b. "consistently", "always", "over time" -> content_scope "all" (look across all of the player's reports). "Explain your ranking" for a top-N list is satisfied by the sort and the listed scores: use intent list with sort and limit, not comment_analysis.
 12. limit: only when the user asks for a number of results ("top 5" -> 5). Otherwise null.
 13. assumptions: short plain-English notes for each interpretation the admin should know (which tag "speed" mapped to, that heights use the range midpoint, that "recently" means the last 12 months, ...). Empty if none.
 14. Follow-ups: if the conversation context has a previous spec and the new question refines it ("only the left-footed ones", "and in Aarhus?", "how many of them were born in 2012?"), return the FULL merged spec: keep EVERY previous condition (filters, tags, text, meaning, near, content_logic, content_scope) and add the new one; change intent if asked ("how many of them" -> count). If it is a new topic, ignore it.
@@ -77,6 +80,14 @@ Q: Which players show leadership?
 -> data; list; meaning {query:"He is a natural leader who organises and commands his teammates", fields:["any"]}; text [{fields:["any"], any_of:["leader"]}]; content_logic any; scope all
 Q: How many players are described as good in the air?
 -> data; count; filters [] (none!); meaning {query:"He is strong in the air and wins his headers", fields:["any"]}; tags [{deadball:["Strong attacking heading","Strong defensive heading"]}]; content_logic any; scope all
+Q: Which striker consistently shows great results with speed? Top 3 under 16, explain your ranking
+-> data; list; filters [{position contains "No. 9" (the striker entry of the positions list)},{age_group gte "<current year - 15>"}]; tags [{physical:["Speed"]}] (the speed tag ONLY); meaning null; content_logic all; scope all; sort overall_score desc; limit 3
+Q: How many players are "JL Top 18 in Denmark"?
+-> data; count; filters [] (none: it is not a recommendation value); text [{fields:["any"], any_of:["JL Top 18 in Denmark"]}]; meaning null; scope all
+Q: Find players taller than 180 cm who show good leadership and speed
+-> data; list; filters [{height_now gt "180"}] ONLY (never add stage_of_growth, recommendation, position or age filters the question does not mention); tags [{physical:["<the speed tag>"]},{mental:["<the leadership tag>"]}]; meaning null; content_logic all
+Q: Which player has the tallest father?
+-> data; list; sort father_height desc; limit 1 (a superlative over a number is a sorted list, never a profile)
 Q: Average potential score per position
 -> data; aggregate; aggregate {fn:"avg", field:"overall_potential_score"}; group_by position
 Q: How many reports did each scout write in 2025?
@@ -112,6 +123,7 @@ function userPrompt(question, context) {
     });
   }
   if (context && context.lastSpec) lines.push(`Previous data spec (for follow-ups): ${JSON.stringify(context.lastSpec)}`);
+  lines.push(`Today's date: ${new Date().toISOString().slice(0, 10)}`);
   lines.push(`Question: ${question}`);
   return lines.join('\n');
 }

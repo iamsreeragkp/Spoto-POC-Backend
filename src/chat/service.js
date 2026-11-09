@@ -2,6 +2,8 @@ const crypto = require('crypto');
 const chatPool = require('../db/chatPool');
 const { getLlm } = require('./llm');
 const { normalizePlan, SpecError, FIELDS } = require('./spec');
+const { carryFollowUp } = require('./followup');
+const { getMasker } = require('./privacy');
 const { getVocabulary, invalidateVocabulary } = require('./vocabulary');
 const { buildQueries } = require('./builder');
 const { locationsWithin } = require('./geo');
@@ -14,7 +16,7 @@ const { GENERAL_SYSTEM, helpSystem, JUDGE_SYSTEM, PROFILE_SYSTEM, COMPARE_SYSTEM
 const SPEC_TTL = (Number(process.env.CHAT_SPEC_CACHE_TTL_SECONDS) || 3600) * 1000;
 const RESULT_TTL = (Number(process.env.CHAT_RESULT_CACHE_TTL_SECONDS) || 60) * 1000;
 const MAX_MESSAGE = 500;
-const commentsAllowed = () => String(process.env.CHAT_ALLOW_COMMENT_LLM ?? 'true').toLowerCase() !== 'false';
+const commentsAllowed = () => String(process.env.CHAT_ALLOW_COMMENT_LLM ?? 'false').toLowerCase() === 'true';
 
 class ChatError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -45,6 +47,7 @@ const plural = (n, w) => `${fmt(n)} ${w}${n === 1 ? '' : 's'}`;
 
 /** Call after any data change (see server.js) so answers never go stale. */
 function clearCaches() {
+  require('./privacy').clearPrivacyCache(); // a new/renamed player or scout must be masked from the next request on
   resultCache.clear();
   clearRetrievalCache();
   invalidateVocabulary();
@@ -81,6 +84,22 @@ const FIELD_LABEL = { father_height: "Father's height", mother_height: "Mother's
   secondary_position: 'Secondary position', jersey_number: 'Jersey number', score_change: 'Score change', report_count: 'Number of reports' };
 const label = (f) => FIELD_LABEL[f] || f.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 
+/** When nothing matched and a numeric filter lies outside the recorded range, say so ("tallest recorded: 175.5 cm"). */
+async function rangeNotes(spec, unit) {
+  const OPTEXT = { gt: 'above', gte: 'at least', lt: 'below', lte: 'at most' };
+  const out = [];
+  const nums = spec.filters.filter((f) => FIELDS[f.field] && FIELDS[f.field].kind === 'num' && OPTEXT[f.op]).slice(0, 2);
+  for (const f of nums) {
+    const col = FIELDS[f.field].col; // from the field whitelist, never from user text
+    const { rows } = await chatPool.query(`SELECT min(${col}) AS lo, max(${col}) AS hi FROM ${spec.unit === 'report' ? 'report_facts' : 'player_latest'} WHERE ${col} IS NOT NULL`);
+    const lo = Number(rows[0].lo), hi = Number(rows[0].hi), v = Number(f.value);
+    if (rows[0].lo == null) continue;
+    const outside = (f.op === 'gt' && v >= hi) || (f.op === 'gte' && v > hi) || (f.op === 'lt' && v <= lo) || (f.op === 'lte' && v < lo);
+    if (outside) out.push(`No ${unit} has ${label(f.field).toLowerCase()} ${OPTEXT[f.op]} ${fmt(v)}: recorded values range from ${fmt(lo)} to ${fmt(hi)}.`);
+  }
+  return out;
+}
+
 function coverageNotes(coverage, unit) {
   return coverage.filter((c) => c.known < c.total).map((c) =>
     `${label(c.field)} is recorded for only ${fmt(c.known)} of ${fmt(c.total)} ${unit}s matching your other criteria; ${unit}s without it are not counted.`);
@@ -111,7 +130,12 @@ async function plan(message, context, vocab, timings) {
     throw new ChatError(502, 'The AI provider could not interpret the question right now. Please try again.');
   }
   timings.llm_ms = Date.now() - t0;
-  const result = normalizePlan(raw, vocab);
+  let result = carryFollowUp(message, context.lastSpec, normalizePlan(raw, vocab));
+  // a name shared by several people ("Carl") reaches the planner masked as [name]: ask which one is meant
+  if (result.route === 'data' && result.spec && (result.spec.players || []).some((p) => /\[name\]/.test(p))) {
+    const names = (await getMasker()).ambiguous(message);
+    result = { route: 'clarify', reply: names.length ? `Which player do you mean? Several match: ${names.join(', ')}.` : 'Which player do you mean? Please use the full name.', spec: null };
+  }
   planCache.set(key, result);
   return { ...result, planCached: false };
 }
@@ -347,6 +371,7 @@ async function answerData(message, planned, opts, timings) {
   const minutesByLoc = near ? new Map(near.locations.map((l) => [l.location, l.minutes])) : null;
   let rows = (exec.rows || []).map((p) => (minutesByLoc ? { ...p, drive_minutes: minutesByLoc.get(p.location) ?? null } : p));
   notes.push(...coverageNotes(exec.coverage, unitWord));
+  if (Number(exec.count) === 0) notes.push(...(await rangeNotes(spec, unitWord)));
 
   // evidence snippets for content searches
   const hasContent = spec.tags.length || spec.text.length || meaningRes;

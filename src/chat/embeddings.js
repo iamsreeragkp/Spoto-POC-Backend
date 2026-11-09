@@ -25,8 +25,16 @@ function openaiClient() {
 }
 const openaiModel = () => process.env.EMBEDDING_MODEL || 'text-embedding-3-small';
 
+/** Test hook: replace the OpenAI client. */
+const setClientForTests = (c) => { client = c; };
+
 async function openaiEmbed(texts) {
-  const res = await openaiClient().embeddings.create({ model: openaiModel(), input: texts, dimensions: DIMS });
+  // names are removed before anything is sent (see privacy.js); fresh directory so brand-new players are covered too
+  const { getMasker, assertClean } = require('./privacy');
+  const m = await getMasker({ fresh: true });
+  const input = texts.map((t) => m.scrub(t));
+  assertClean(m, input);
+  const res = await openaiClient().embeddings.create({ model: openaiModel(), input, dimensions: DIMS });
   return res.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
 }
 
@@ -77,4 +85,4 @@ const modelId = () => provider().id();
 /** pgvector text literal */
 const toSql = (vec) => `[${vec.map((x) => (Math.abs(x) < 1e-7 ? 0 : x.toFixed(6))).join(',')}]`;
 
-module.exports = { embed, modelId, toSql, DIMS };
+module.exports = { embed, modelId, toSql, DIMS, setClientForTests };

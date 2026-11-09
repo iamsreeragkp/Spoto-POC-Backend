@@ -14,7 +14,7 @@ async function load() {
     (await q(`SELECT ${col} AS v FROM ${from} WHERE ${col} IS NOT NULL GROUP BY 1 ORDER BY COUNT(*) DESC, 1 LIMIT 300`)).map((r) => r.v);
   const [tagRows, positions, secondaryPositions, stageOfGrowth, strongFoot, recommendations, ageGroups, locations, scouts] = await Promise.all([
     q('SELECT category, tag, COUNT(*)::int AS n FROM report_tags GROUP BY 1, 2 ORDER BY 1, 3 DESC'),
-    list('position'), list('secondary_position'), list('stage_of_growth'), list('strong_foot'), list('recommendation'),
+    list('position'), list('secondary_position'), list('stage_of_growth'), list('strong_foot'), list('recommendation', 'reports'), // all reports: a value used only in older reports is still a real value
     list('age_group'), list('location'), list('name', 'scouts'),
   ]);
   const tags = Object.fromEntries(TAG_CATEGORIES.map((c) => [c, []]));

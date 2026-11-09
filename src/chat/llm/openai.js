@@ -1,6 +1,7 @@
 const OpenAI = require('openai');
 const { PLAN_SCHEMA } = require('../spec');
 const { systemPrompt, userPrompt, VERIFY_SYSTEM, VERIFY_SCHEMA } = require('./prompt');
+const { getMasker, assertClean, TOKEN_NOTE } = require('../privacy');
 
 let client;
 function getClient() {
@@ -18,47 +19,66 @@ function getClient() {
   return client;
 }
 
+/** Test hook: replace the OpenAI client (the privacy tests capture what would be sent). */
+const setClientForTests = (c) => { client = c; };
+
+// Every request is masked first (player/scout names -> aliases, see privacy.js) and checked before it is sent;
+// replies are translated back locally.
+async function guarded(texts, opts, system = true) {
+  const m = await getMasker();
+  const masked = texts.map((t) => m.mask(t, opts));
+  if (system) masked[0] += TOKEN_NOTE; // first text is the system prompt
+  assertClean(m, masked);
+  return { m, masked };
+}
+
 const model = () => process.env.OPENAI_MODEL || 'gpt-4o-mini';
 
 module.exports = {
   name: 'openai',
+  setClientForTests,
 
   /** question (+ conversation context) -> raw plan { route, reply, spec } */
   async plan({ question, context, vocab }) {
+    const { m, masked } = await guarded([systemPrompt(vocab), userPrompt(question, context)], { allowParts: true });
     const res = await getClient().chat.completions.create({
       model: model(),
       temperature: 0,
       max_tokens: 900,
       response_format: { type: 'json_schema', json_schema: { name: 'plan', strict: true, schema: PLAN_SCHEMA } },
       messages: [
-        { role: 'system', content: systemPrompt(vocab) },
-        { role: 'user', content: userPrompt(question, context) },
+        { role: 'system', content: masked[0] },
+        { role: 'user', content: masked[1] },
       ],
     });
-    return JSON.parse(res.choices[0].message.content);
+    return m.unmaskDeep(JSON.parse(res.choices[0].message.content));
   },
 
   /** Free-text completion (general chat, help, judgement, profile, compare). Streams through onToken when given. */
   async complete({ system, content, onToken, maxTokens = 500, temperature = 0.3 }) {
+    const { m, masked } = await guarded([system, content], { allowParts: false });
     const args = {
       model: process.env.CHAT_COMMENT_MODEL || model(),
       temperature,
       max_tokens: maxTokens,
-      messages: [{ role: 'system', content: system }, { role: 'user', content }],
+      messages: [{ role: 'system', content: masked[0] }, { role: 'user', content: masked[1] }],
     };
-    if (!onToken) return (await getClient().chat.completions.create(args)).choices[0].message.content.trim();
+    if (!onToken) return m.unmask((await getClient().chat.completions.create(args)).choices[0].message.content.trim());
     let text = '';
+    const out = m.unmaskStream(onToken);
     const stream = await getClient().chat.completions.create({ ...args, stream: true });
     for await (const chunk of stream) {
       const d = chunk.choices[0]?.delta?.content;
-      if (d) { text += d; onToken(d); }
+      if (d) { text += d; out.push(d); }
     }
-    return text.trim();
+    out.flush();
+    return m.unmask(text.trim());
   },
 
   /** -> numbers of the passages that express the concept */
   async verifyPassages({ question, concept, passages }) {
-    const content = `Question: ${question}\nConcept: ${concept}\n\nPassages:\n${passages.map((p) => `${p.n}. ${p.text}`).join('\n')}`;
+    const { masked } = await guarded([`Question: ${question}\nConcept: ${concept}\n\nPassages:\n${passages.map((p) => `${p.n}. ${p.text}`).join('\n')}`], { allowParts: false }, false);
+    const content = masked[0];
     const res = await getClient().chat.completions.create({
       model: model(),
       temperature: 0,

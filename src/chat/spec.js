@@ -125,6 +125,13 @@ function normalizeSpec(raw, vocab) {
     return true;
   };
 
+  const extraText = [];
+  // Fields with a fixed list of recorded values: an exact match on a value that is not on the list can never match,
+  // so it is searched as free text instead (e.g. "JL Top 18 in Denmark" is written in comments, not a recommendation).
+  const LISTED = { recommendation: vocab.recommendations, stage_of_growth: vocab.stageOfGrowth, strong_foot: vocab.strongFoot };
+  // skill words (whole tag or a word of a tag, e.g. "speed" from "Pace/speed")
+  const tagWords = new Set(Object.values(vocab.tags || {}).flat().flatMap((t) => [norm(t.tag), ...norm(t.tag).split(' ').filter((w) => w.length >= 4)]));
+  const isPositionWord = (v) => (vocab.positions || []).some((p) => norm(p).includes(norm(v)));
   for (const f of raw.filters || []) {
     if (!FIELDS[f && f.field]) { warnings.push(`Ignored unknown filter field "${f && f.field}"`); continue; }
     if (!usable(f.field)) continue;
@@ -140,10 +147,23 @@ function normalizeSpec(raw, vocab) {
     }
     if (def.kind === 'text' && typeof value === 'string') value = value.replace(/\bcenter\b/gi, 'centre');
     if (def.kind !== 'num' && !['is_null', 'not_null'].includes(f.op) && value === '') continue;
+    if ((f.field === 'position' || f.field === 'secondary_position') && tagWords.has(norm(value)) && !isPositionWord(value)) {
+      warnings.push(`“${value}” is a skill tag, not a playing position, so it was not used as a position filter`);
+      continue;
+    }
+    const listed = LISTED[f.field];
+    if (f.op === 'eq' && Array.isArray(listed) && listed.length && value !== '') {
+      const exact = listed.find((v) => norm(v) === norm(value)); // same value ignoring case/punctuation -> use the stored wording
+      if (exact !== undefined) value = String(exact);
+      else {
+        extraText.push({ fields: ['any'], any_of: [value] });
+        warnings.push(`“${value}” is not one of the recorded ${f.field.replace(/_/g, ' ')} values; searched the scouts' text for it instead`);
+        continue;
+      }
+    }
     spec.filters.push({ field: f.field, op: f.op, value });
   }
 
-  const extraText = [];
   for (const t of raw.tags || []) {
     if (!TAG_CATEGORIES.includes(t && t.category)) continue;
     const known = vocab.tags[t.category] || [];
@@ -167,7 +187,21 @@ function normalizeSpec(raw, vocab) {
   // Keyword search. Free text (x-factor, comment) uses full-text search; the tag columns only ever hold vocabulary
   // values, so searching them by words = the vocabulary tags containing those words, matched exactly via report_tags
   // (much faster than text search over tag lists). Both parts stay one OR-condition: { fields, any_of, tag_matches }.
-  for (const t of [...(raw.text || []), ...extraText]) {
+  const rawText = [];
+  for (const t of raw.text || []) {
+    const keep = [];
+    for (const term of t.any_of || []) {
+      const clean = norm(term);
+      const hit = clean.length >= 6 ? Object.entries(LISTED).find(([field, list]) => usable(field) && Array.isArray(list) && list.some((v) => norm(v) === clean)) : null;
+      if (hit) {
+        const value = String(hit[1].find((v) => norm(v) === clean));
+        if (!spec.filters.some((f) => f.field === hit[0] && f.op === 'eq' && f.value === value)) spec.filters.push({ field: hit[0], op: 'eq', value });
+        warnings.push(`“${term}” is the recorded ${hit[0].replace(/_/g, ' ')} “${value}”, so it was used as that filter`);
+      } else keep.push(term);
+    }
+    rawText.push({ ...t, any_of: keep });
+  }
+  for (const t of [...rawText, ...extraText]) {
     let fields = [...new Set((t.fields || []).filter((f) => TEXT_FIELDS.includes(f)))];
     if (!fields.length) fields = ['any'];
     const terms = (t.any_of || []).map(cleanTerm).filter((x) => x.length >= 2).slice(0, 12);

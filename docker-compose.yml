@@ -37,6 +37,9 @@ services:
       DATABASE_URL: postgres://postgres:postgres@db:5432/sporto_poc
       # Read-only role used for every chatbot query (created by scripts/migrate.js)
       CHAT_DATABASE_URL: postgres://chat_reader:chat_reader@db:5432/sporto_poc
+      # Safe defaults while real names are loaded: scout comment text is not sent to the AI (edit here to enable; docker compose would otherwise read .env)
+      CHAT_ALLOW_COMMENT_LLM: "false"
+      EMBEDDINGS_WORKER: "false"
     ports:
       - "4000:4000"
     depends_on:

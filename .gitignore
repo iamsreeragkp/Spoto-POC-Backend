@@ -1,3 +1,7 @@
 node_modules
 .env
 backups/
+
+# real player names: never commit
+data/private/
+/Reports_Players_*.xlsx

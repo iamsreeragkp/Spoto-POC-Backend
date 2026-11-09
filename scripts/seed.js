@@ -86,9 +86,9 @@ const time = (v) => {
            overall_score, overall_potential_score, overall_comment, recommendation)
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
         [playerId, matchId || null, scoutId, date(r.reportDate), str(r['Stage of Growth']), str(r['Height Now']),
-         str(r.Physical), str(r.Mental), str(r.Technical), str(r.Tactical), str(r.Deadball), str(r['X-factor']),
+         str(r.Physical), str(r.Mental), str(r.Technical), str(r.Tactical), str(r.Deadball), str(r['X-factor'] ?? r['Special '] ?? r.Special),
          int(r['Score Physical']), int(r['Score Mental']), int(r['Score Technical']), int(r['Score Tactical']),
-         int(r['Score Deadball']), int(r['Score X-factor']),
+         int(r['Score Deadball']), int(r['Score X-factor'] ?? r['Score Special']),
          int(r.overallScore), int(r.overallPotentialScore), str(r.overallComment), str(r.recommendation)]);
       reports++;
     }

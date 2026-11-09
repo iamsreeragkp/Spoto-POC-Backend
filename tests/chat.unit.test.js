@@ -127,3 +127,51 @@ test('mock embeddings: related wording is closer than unrelated wording', async 
   assert.ok(dot(a, b) > dot(a, c));
   assert.ok(Math.abs(dot(a, a) - 1) < 1e-6);
 });
+
+test('normalizeSpec: an exact filter on a fixed-list field with an unknown value becomes a text search', () => {
+  const v = { ...vocab, recommendations: ['Golden Boy!!!', 'Needs to be watched again!'], stageOfGrowth: ['Average developed'], strongFoot: ['Right', 'Left'] };
+  const { spec, warnings } = normalizeSpec({ intent: 'count', filters: [{ field: 'recommendation', op: 'eq', value: 'JL Top 18 in Denmark.' }] }, v);
+  assert.equal(spec.filters.length, 0);
+  assert.deepEqual(spec.text, [{ fields: ['x_factor', 'comment'], any_of: ['JL Top 18 in Denmark.'], tag_matches: [] }]);
+  assert.match(warnings.join(' '), /not one of the recorded recommendation values/);
+  const ok = normalizeSpec({ intent: 'count', filters: [{ field: 'recommendation', op: 'eq', value: 'golden boy' }, { field: 'strong_foot', op: 'eq', value: 'Left' }] }, v).spec;
+  assert.equal(ok.filters.length, 2, 'known values are kept');
+  assert.equal(ok.filters[0].value, 'Golden Boy!!!', 'case/punctuation differences are mapped to the stored wording');
+});
+
+test('normalizeSpec: a keyword equal to a recorded recommendation becomes that filter; a tag word is not a position', () => {
+  const v = { ...vocab, recommendations: ['Golden-boy!!!', 'Needs to be watched again!'], stageOfGrowth: [], strongFoot: ['Right', 'Left'], positions: ['No. 9', 'Right winger'] };
+  const a = normalizeSpec({ intent: 'count', text: [{ fields: ['any'], any_of: ['Golden Boy!!!'] }] }, v);
+  assert.deepEqual(a.spec.filters, [{ field: 'recommendation', op: 'eq', value: 'Golden-boy!!!' }]);
+  assert.equal(a.spec.text.length, 0);
+  const b = normalizeSpec({ intent: 'count', text: [{ fields: ['any'], any_of: ['right'] }] }, v);
+  assert.equal(b.spec.filters.length, 0, 'short words stay keyword searches');
+  const c = normalizeSpec({ intent: 'count', filters: [{ field: 'position', op: 'contains', value: 'Speed' }] }, v);
+  assert.equal(c.spec.filters.length, 0);
+  assert.match(c.warnings.join(' '), /skill tag, not a playing position/);
+  const d = normalizeSpec({ intent: 'count', filters: [{ field: 'position', op: 'contains', value: 'winger' }] }, v);
+  assert.equal(d.spec.filters.length, 1, 'real positions are untouched');
+});
+
+test('carryFollowUp puts back conditions the planner dropped in "of those" follow-ups', () => {
+  const { carryFollowUp } = require('../src/chat/followup');
+  const last = { intent: 'list', filters: [{ field: 'position', op: 'contains', value: 'winger' }], tags: [{ category: 'physical', any_of: ['Speed'] }], text: [], meaning: null, near: null, content_logic: 'all', content_scope: 'latest' };
+  const dropped = { route: 'data', spec: { intent: 'count', filters: [{ field: 'age_group', op: 'eq', value: 2013 }], tags: [], text: [], meaning: null, near: null, players: ['A', 'B'], assumptions: [] } };
+  const out = carryFollowUp('how many of those were born in 2013?', last, dropped).spec;
+  assert.deepEqual(out.filters.map((f) => f.field), ['position', 'age_group']);
+  assert.equal(out.tags.length, 1);
+  assert.deepEqual(out.players, []);
+  assert.match(out.assumptions.join(' '), /Kept the conditions/);
+  // new topic / no back-reference / already merged: untouched
+  assert.equal(carryFollowUp('how many goalkeepers are there?', last, dropped), dropped);
+  const merged = { route: 'data', spec: { ...dropped.spec, filters: [...last.filters, { field: 'age_group', op: 'eq', value: 2013 }], tags: last.tags, players: [] } };
+  assert.deepEqual(carryFollowUp('how many of those were born in 2013?', last, merged).spec.filters, merged.spec.filters);
+  assert.equal(carryFollowUp('how many of those?', { intent: 'profile', filters: [] }, dropped), dropped);
+});
+
+test('privacy masker lists everyone who shares an ambiguous name part', () => {
+  const { buildMasker } = require('../src/chat/privacy');
+  const m = buildMasker([{ token: '⟦P1⟧', name: 'Carl Baker' }, { token: '⟦P2⟧', name: 'Carl Eklund Jahn' }, { token: '⟦P3⟧', name: 'Alex' }]);
+  assert.deepEqual(m.ambiguous('Tell me about Carl'), ['Carl Baker', 'Carl Eklund Jahn']);
+  assert.deepEqual(m.ambiguous('Tell me about Alex'), []);
+});
