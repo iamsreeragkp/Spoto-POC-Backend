@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const chatPool = require('../db/chatPool');
 const { getLlm } = require('./llm');
 const { normalizePlan, SpecError, FIELDS } = require('./spec');
-const { carryFollowUp } = require('./followup');
+const { carryFollowUp, defaultTextScope } = require('./followup');
 const { getMasker, aliasPlayer } = require('./privacy');
 const { getVocabulary, invalidateVocabulary } = require('./vocabulary');
 const { buildQueries } = require('./builder');
@@ -130,7 +130,7 @@ async function plan(message, context, vocab, timings) {
     throw new ChatError(502, 'The AI provider could not interpret the question right now. Please try again.');
   }
   timings.llm_ms = Date.now() - t0;
-  let result = carryFollowUp(message, context.lastSpec, normalizePlan(raw, vocab));
+  let result = defaultTextScope(message, carryFollowUp(message, context.lastSpec, normalizePlan(raw, vocab)));
   // a name shared by several people ("Carl") reaches the planner masked as [name]: ask which one is meant
   if (result.route === 'data' && result.spec && (result.spec.players || []).some((p) => /\[name\]/.test(p))) {
     const names = (await getMasker()).ambiguous(message);

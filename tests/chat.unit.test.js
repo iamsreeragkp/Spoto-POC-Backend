@@ -193,3 +193,17 @@ test('tsQueryText: "top18" and "top 18" match each other; words without digits a
   assert.equal(tsQueryText(['top18']), 'top18:* | (top <-> 18:*)');
   assert.equal(tsQueryText(['dribbl']), 'dribbl:*');
 });
+
+test('defaultTextScope: keyword searches in comments look at all reports unless the question says latest/current', () => {
+  const { defaultTextScope } = require('../src/chat/followup');
+  const plan = (fields, scope = 'latest', unit = 'player') => ({ route: 'data', spec: { unit, content_scope: scope, text: [{ fields, any_of: ['x'] }], assumptions: [] } });
+  assert.equal(defaultTextScope('How many players with "JL top 18"?', plan(['x_factor', 'comment'])).spec.content_scope, 'all');
+  assert.equal(defaultTextScope('players whose comment mentions agility', plan(['comment'])).spec.content_scope, 'all');
+  assert.equal(defaultTextScope('How many players have "JL top 18" in their latest report?', plan(['x_factor', 'comment'])).spec.content_scope, 'latest');
+  assert.equal(defaultTextScope('Who is currently described as a leader?', plan(['comment'])).spec.content_scope, 'latest');
+  const xf = plan(['x_factor']);
+  assert.equal(defaultTextScope('How many players have dribbling as x-factor?', xf), xf, 'x-factor-only searches keep latest');
+  const rep = plan(['comment'], 'latest', 'report');
+  assert.equal(defaultTextScope('How many reports mention speed?', rep), rep, 'report unit untouched');
+  assert.match(defaultTextScope('How many players mention speed?', plan(['comment'])).spec.assumptions.join(' '), /all of each player/);
+});

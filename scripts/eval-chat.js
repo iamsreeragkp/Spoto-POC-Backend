@@ -84,6 +84,13 @@ const CASES = [
   // spelling variants of the same phrase ("top18" vs "top 18") must give the same count as the data
   ['How many reports with "JL top18 in Denmark"',
     async (r) => r.unit !== 'player' && r.count === await n("SELECT count(*) n FROM reports WHERE overall_comment ~* 'jl\\s*top\\s*18' OR x_factor ~* 'jl\\s*top\\s*18'")],
+  [['How many reports with "JL top18 in Denmark"?', 'How many players with "JL top18 in Denmark"?'],
+    async (r, s) => r.intent === 'count' && s.content_scope === 'all'
+      && r.count === await n("SELECT count(DISTINCT player_id) n FROM reports WHERE overall_comment ~* 'jl\\s*top\\s*18' OR x_factor ~* 'jl\\s*top\\s*18'")],
+  ['How many players have "JL top 18 in Denmark" in their latest report?',
+    async (r, s) => r.intent === 'count' && s.content_scope === 'latest'
+      && r.count === await n("SELECT count(*) n FROM player_latest pl JOIN reports r ON r.id = pl.report_id WHERE r.overall_comment ~* 'jl\\s*top\\s*18' OR r.x_factor ~* 'jl\\s*top\\s*18'")],
+
   // ---- follow-up conversations ----
   [['Show the centre-backs', 'only the left-footed ones', 'how many of them are born in 2012?'],
     async (r, s) => r.intent === 'count' && r.count === await n("SELECT count(*) n FROM player_latest WHERE position ILIKE '%centre-back%' AND strong_foot = 'Left' AND age_group = 2012")],

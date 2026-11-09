@@ -34,4 +34,18 @@ function carryFollowUp(message, lastSpec, result) {
   return { ...result, spec: merged };
 }
 
-module.exports = { carryFollowUp, REFERS_BACK };
+// A keyword search in the comment text is about what scouts have written, i.e. any report. The planner sometimes picks
+// "latest report only" (and a follow-up from a report question inherits it), which gives a different count for the
+// same question. Unless the question asks for the latest/current report, such searches look at all reports.
+const LATEST_WORDS = /\b(?:latest|current|currently|now|most recent|newest|last report|at the moment)\b/i;
+
+function defaultTextScope(message, result) {
+  const s = result && result.route === 'data' && result.spec;
+  if (!s || s.unit !== 'player' || s.content_scope !== 'latest') return result;
+  const inComments = (s.text || []).some((t) => (t.fields || []).some((f) => f === 'comment' || f === 'any'));
+  if (!inComments || LATEST_WORDS.test(message)) return result; // x-factor-only searches and explicit "latest" keep latest
+  return { ...result, spec: { ...s, content_scope: 'all',
+    assumptions: [...(s.assumptions || []), 'Searched all of each player\u2019s reports (add \u201cin the latest report\u201d to limit it).'].slice(0, 8) } };
+}
+
+module.exports = { carryFollowUp, defaultTextScope, REFERS_BACK };
