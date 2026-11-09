@@ -153,7 +153,10 @@ function normalizeSpec(raw, vocab) {
     }
     const listed = LISTED[f.field];
     if (f.op === 'eq' && Array.isArray(listed) && listed.length && value !== '') {
-      const exact = listed.find((v) => norm(v) === norm(value)); // same value ignoring case/punctuation -> use the stored wording
+      const wordIn = (v) => (` ${norm(value)} `).includes(` ${norm(v)} `);
+      const same = listed.filter((v) => norm(v) === norm(value));
+      const contained = same.length ? [] : listed.filter((v) => norm(v) !== '' && wordIn(v)); // "left footed" contains "left"
+      const exact = same.length ? same[0] : (contained.length === 1 ? contained[0] : undefined); // same value ignoring case/punctuation -> stored wording
       if (exact !== undefined) value = String(exact);
       else {
         extraText.push({ fields: ['any'], any_of: [value] });

@@ -91,6 +91,14 @@ function buildMasker(entries) {
   return { mask, scrub, unmask, unmaskDeep, unmaskStream, findLeak, ambiguous, size: entries.length };
 }
 
+/** Replaces a player's own full name and name parts in free text by that player's alias token (reversible). */
+function aliasPlayer(text, name, id) {
+  const parts = String(name || '').split(/[\s\-]+/).filter((p) => p.length >= 3 && !/^\d+$/.test(p) && !IGNORE_PARTS.has(p.toLowerCase()));
+  const list = [...new Set([clean(name), fold(clean(name)), ...parts, ...parts.map(fold)])].filter(Boolean);
+  const re = wordRe(list);
+  return re && text != null ? String(text).replace(re, `\u27E6P${id}\u27E7`) : text;
+}
+
 // ---- directory of names, loaded from the database ----
 const TTL = 60 * 1000;
 let cache = { at: 0, masker: null };
@@ -129,7 +137,7 @@ function assertClean(masker, ...texts) {
   }
 }
 
-module.exports = { buildMasker, getMasker, clearPrivacyCache, setMaskerForTests, assertClean };
+module.exports = { buildMasker, getMasker, clearPrivacyCache, setMaskerForTests, assertClean, aliasPlayer };
 
 /** Added to every system prompt so the model copies alias tokens back verbatim instead of expanding them. */
 const TOKEN_NOTE = `

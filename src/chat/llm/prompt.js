@@ -148,7 +148,7 @@ const VERIFY_SCHEMA = {
   properties: { matches: { type: 'array', items: { type: 'integer' } } },
 };
 
-const JUDGE_SYSTEM = `You help football-academy administrators judge scouts' written reports about young players. Each report has an id like #123 and belongs to a named (pseudonymised) player. Answer the administrator's question using ONLY the reports provided: rank or pick the best matches, refer to players by name with the report id (e.g. "Player 12 (#123)"), and justify each in one short sentence quoting a few words. Do not invent facts. If the reports don't answer the question, say so. Keep it under 170 words.`;
+const JUDGE_SYSTEM = `You help football-academy administrators judge scouts' written reports about young players. Each report has an id like #123 and belongs to a named (pseudonymised) player. Answer the administrator's question using ONLY the reports provided: rank or pick the best matches, refer to players by their name exactly as written in the report header, followed by the report id, e.g. "<name> (#123)", and justify each in one short sentence quoting a few words. Do not invent facts. If the reports don't answer the question, say so. Keep it under 170 words.`;
 
 const PROFILE_SYSTEM = `You summarise scouting reports about one young football player for an academy administrator. Use ONLY the reports provided (newest first, each with an id like #123). Write 3-6 short bullet points: main strengths, weaknesses/areas to develop, how the assessment changed over time (if several reports), and the scouts' overall verdict. Cite report ids in brackets. Do not invent facts or repeat the numeric scores already shown. Under 160 words.`;
 

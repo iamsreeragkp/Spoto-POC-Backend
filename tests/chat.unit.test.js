@@ -175,3 +175,14 @@ test('privacy masker lists everyone who shares an ambiguous name part', () => {
   assert.deepEqual(m.ambiguous('Tell me about Carl'), ['Carl Baker', 'Carl Eklund Jahn']);
   assert.deepEqual(m.ambiguous('Tell me about Alex'), []);
 });
+
+test('normalizeSpec: "left-footed" maps to the recorded value "Left"; unrelated phrases still become text search', () => {
+  const v = { ...vocab, recommendations: ['Needs to be watched again!'], stageOfGrowth: [], strongFoot: ['Right', 'Left', 'Two-footed'] };
+  const a = normalizeSpec({ intent: 'count', filters: [{ field: 'strong_foot', op: 'eq', value: 'Left-footed' }] }, v).spec;
+  assert.deepEqual(a.filters, [{ field: 'strong_foot', op: 'eq', value: 'Left' }]);
+  const b = normalizeSpec({ intent: 'count', filters: [{ field: 'strong_foot', op: 'eq', value: 'Two footed' }] }, v).spec;
+  assert.deepEqual(b.filters, [{ field: 'strong_foot', op: 'eq', value: 'Two-footed' }]);
+  const c = normalizeSpec({ intent: 'count', filters: [{ field: 'recommendation', op: 'eq', value: 'JL Top 18 in Denmark.' }] }, v).spec;
+  assert.equal(c.filters.length, 0);
+  assert.equal(c.text.length, 1);
+});

@@ -3,7 +3,7 @@ const chatPool = require('../db/chatPool');
 const { getLlm } = require('./llm');
 const { normalizePlan, SpecError, FIELDS } = require('./spec');
 const { carryFollowUp } = require('./followup');
-const { getMasker } = require('./privacy');
+const { getMasker, aliasPlayer } = require('./privacy');
 const { getVocabulary, invalidateVocabulary } = require('./vocabulary');
 const { buildQueries } = require('./builder');
 const { locationsWithin } = require('./geo');
@@ -189,10 +189,12 @@ const knownNames = redactionNames; // scouts, teams + names learned from the dat
 /** A report as text for the LLM, with names redacted (player names are already pseudonymised). */
 function reportForLlm(r, names) {
   const tags = ['physical', 'mental', 'technical', 'tactical', 'deadball'].filter((c) => r[c]).map((c) => `${c}: ${r[c]}`).join('; ');
+  // the report's own player is aliased (not "[name]") so the AI knows who is meant and quotes read naturally once translated back
+  const own = (t) => redactComment(aliasPlayer(t, r.player_name, r.player_id), names);
   return [`#${r.id} (${r.player_name}, ${r.report_date || 'undated'}${r.recommendation ? `, “${r.recommendation}”` : ''})`,
-    r.x_factor ? `X-factor: ${redactComment(r.x_factor, names)}` : null,
+    r.x_factor ? `X-factor: ${own(r.x_factor)}` : null,
     tags ? `Tags: ${tags}` : null,
-    r.overall_comment ? `Comment: ${redactComment(r.overall_comment, names).slice(0, 1800)}` : null].filter(Boolean).join('\n');
+    r.overall_comment ? `Comment: ${own(r.overall_comment).slice(0, 1800)}` : null].filter(Boolean).join('\n');
 }
 
 function profileHeader(p, reps) {

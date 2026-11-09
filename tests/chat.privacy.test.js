@@ -144,3 +144,10 @@ test('pseudonym-style names ("Player 12") never trip the guard on our own prompt
   assert.match(sent, /⟦P12⟧/);
   setMaskerForTests(masker);
 });
+
+test("aliasPlayer replaces a report's own player (full name and parts) by the reversible token", () => {
+  const { aliasPlayer } = require('../src/chat/privacy');
+  assert.equal(aliasPlayer('Anna was calm. Testsen is fast. Anna Testsen scored.', 'Anna Testsen', 7), '⟦P7⟧ was calm. ⟦P7⟧ is fast. ⟦P7⟧ scored.');
+  assert.equal(aliasPlayer('He is calm', 'Anna Testsen', 7), 'He is calm');
+  assert.equal(masker.unmask(aliasPlayer('Alex plays directly', 'Alex', 2)), 'Alex plays directly');
+});
