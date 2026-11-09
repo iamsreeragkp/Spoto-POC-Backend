@@ -81,6 +81,9 @@ const CASES = [
     async (r) => r.count === await n(`SELECT count(*) n FROM reports r JOIN scouts s ON s.id = r.scout_id WHERE s.name = '${NAME.SCOUT.replace(/'/g, "''")}'`)],
   ['Tell me about {B}', (r, s) => r.intent === 'profile' && r.players.length === 1 && r.players[0].name === NAME.B],
 
+  // spelling variants of the same phrase ("top18" vs "top 18") must give the same count as the data
+  ['How many reports with "JL top18 in Denmark"',
+    async (r) => r.unit !== 'player' && r.count === await n("SELECT count(*) n FROM reports WHERE overall_comment ~* 'jl\\s*top\\s*18' OR x_factor ~* 'jl\\s*top\\s*18'")],
   // ---- follow-up conversations ----
   [['Show the centre-backs', 'only the left-footed ones', 'how many of them are born in 2012?'],
     async (r, s) => r.intent === 'count' && r.count === await n("SELECT count(*) n FROM player_latest WHERE position ILIKE '%centre-back%' AND strong_foot = 'Left' AND age_group = 2012")],

@@ -14,15 +14,31 @@ const words = (term) => (String(term).toLowerCase().normalize('NFKC').match(/[\p
  * Single words are prefix-matched (stems like "dribbl" match dribbling/dribbler); phrases must appear in order.
  * Returns null when no usable words remain.
  */
+// "top18" and "top 18" are different words to the index; people type both, so each term also matches the other spelling
+const splitDigits = (w) => w.replace(/(\p{L})(\p{N})/gu, '$1 $2').replace(/(\p{N})(\p{L})/gu, '$1 $2').split(' ');
+function spellings(ws) {
+  const out = [ws];
+  const split = ws.flatMap(splitDigits); // top18 -> top 18
+  if (split.length !== ws.length) out.push(split);
+  const merged = []; // top 18 -> top18
+  for (let i = 0; i < ws.length; i++) {
+    if (i + 1 < ws.length && /^\p{L}+$/u.test(ws[i]) && /^\p{N}+$/u.test(ws[i + 1])) { merged.push(ws[i] + ws[i + 1]); i++; } else merged.push(ws[i]);
+  }
+  if (merged.length !== ws.length) out.push(merged);
+  return out;
+}
+
 function tsQueryText(terms) {
   const parts = [];
   for (const term of terms) {
     const ws = words(term);
     if (!ws.length) continue;
-    if (ws.length === 1) parts.push(`${ws[0]}:*`);
-    else parts.push(`(${ws.map((x, i) => (i === ws.length - 1 ? `${x}:*` : x)).join(' <-> ')})`);
+    for (const v of spellings(ws)) {
+      if (v.length === 1) parts.push(`${v[0]}:*`);
+      else parts.push(`(${v.map((x, i) => (i === v.length - 1 ? `${x}:*` : x)).join(' <-> ')})`);
+    }
   }
-  return parts.length ? parts.join(' | ') : null;
+  return parts.length ? [...new Set(parts)].join(' | ') : null;
 }
 
 /** Vector columns to search for a set of fields. */

@@ -186,3 +186,10 @@ test('normalizeSpec: "left-footed" maps to the recorded value "Left"; unrelated 
   assert.equal(c.filters.length, 0);
   assert.equal(c.text.length, 1);
 });
+
+test('tsQueryText: "top18" and "top 18" match each other; words without digits are unchanged', () => {
+  assert.equal(tsQueryText(['JL top18 in Denmark']), '(jl <-> top18 <-> in <-> denmark:*) | (jl <-> top <-> 18 <-> in <-> denmark:*)');
+  assert.equal(tsQueryText(['JL top 18 in Denmark']), '(jl <-> top <-> 18 <-> in <-> denmark:*) | (jl <-> top18 <-> in <-> denmark:*)');
+  assert.equal(tsQueryText(['top18']), 'top18:* | (top <-> 18:*)');
+  assert.equal(tsQueryText(['dribbl']), 'dribbl:*');
+});
