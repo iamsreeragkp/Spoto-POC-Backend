@@ -8,4 +8,7 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/sporto_poc',
 });
 
+// serverless Postgres (Neon) closes idle connections; the pool reconnects on demand
+pool.on('error', (e) => console.warn('[pool] idle client error:', e.message));
+
 module.exports = pool;

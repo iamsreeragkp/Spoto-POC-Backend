@@ -1,0 +1,212 @@
+[
+  {
+    "question": "How many players have speed and are average developed?",
+    "spec": {
+      "intent": "count",
+      "filters": [{ "field": "stage_of_growth", "op": "eq", "value": "Average developed" }],
+      "tags": [{ "category": "physical", "any_of": ["Pace/speed"] }],
+      "text": [], "content_logic": "all", "near": null, "group_by": null, "sort": null, "limit": null,
+      "assumptions": ["'speed' mapped to the physical tag Pace/speed"]
+    }
+  },
+  {
+    "question": "How many players have dribbling as x-factor?",
+    "spec": {
+      "intent": "count", "filters": [], "tags": [],
+      "text": [{ "fields": ["x_factor"], "any_of": ["dribbl"] }],
+      "content_logic": "all", "near": null, "group_by": null, "sort": null, "limit": null, "assumptions": []
+    }
+  },
+  {
+    "question": "How many players in Player Position Center Back (Right or Left) have Father's height above 185?",
+    "spec": {
+      "intent": "count",
+      "filters": [
+        { "field": "position", "op": "contains", "value": "center-back" },
+        { "field": "father_height", "op": "gt", "value": "185" }
+      ],
+      "tags": [], "text": [], "content_logic": "all", "near": null, "group_by": null, "sort": null, "limit": null,
+      "assumptions": ["Father's height is stored as a range; the midpoint is compared"]
+    }
+  },
+  {
+    "question": "How many players live within 1 hour from Ikast?",
+    "spec": {
+      "intent": "count", "filters": [], "tags": [], "text": [], "content_logic": "all",
+      "near": { "place": "Ikast", "max_minutes": 60 }, "group_by": null, "sort": null, "limit": null, "assumptions": []
+    }
+  },
+  {
+    "question": "Find players with ball-movement or moving with the ball",
+    "route": "data", "reply": null,
+    "spec": {
+      "intent": "list", "unit": "player", "filters": [],
+      "tags": [{ "category": "technical", "any_of": ["Carries the ball forward", "Carries the ball past the first press"] }],
+      "text": [{ "fields": ["any"], "any_of": ["ball movement", "carries the ball"] }],
+      "meaning": { "query": "He moves forward with the ball and carries it past opponents", "fields": ["any"] },
+      "content_logic": "any", "content_scope": "all", "near": null, "players": [], "group_by": null, "aggregate": null,
+      "sort": null, "limit": 100, "assumptions": []
+    }
+  },
+  {
+    "question": "For which players is the word agility mentioned by the scout?",
+    "route": "data", "reply": null,
+    "spec": {
+      "intent": "list", "unit": "player", "filters": [], "tags": [],
+      "text": [{ "fields": ["any"], "any_of": ["agility"] }], "meaning": null,
+      "content_logic": "all", "content_scope": "all", "near": null, "players": [], "group_by": null, "aggregate": null,
+      "sort": null, "limit": 100, "assumptions": []
+    }
+  },
+  {
+    "question": "How many players show leadership?",
+    "route": "data", "reply": null,
+    "spec": {
+      "intent": "count", "unit": "player", "filters": [], "tags": [], "text": [],
+      "meaning": { "query": "He is a natural leader who leads his teammates", "fields": ["comment", "tags"] },
+      "content_logic": "all", "content_scope": "all", "near": null, "players": [], "group_by": null, "aggregate": null,
+      "sort": null, "limit": null, "assumptions": []
+    }
+  },
+  {
+    "question": "How many players per position?",
+    "spec": {
+      "intent": "group_count", "filters": [], "tags": [], "text": [], "content_logic": "all",
+      "near": null, "group_by": "position", "sort": null, "limit": null, "assumptions": []
+    }
+  },
+  {
+    "question": "How many reports did each scout write?",
+    "route": "data", "reply": null,
+    "spec": {
+      "intent": "group_count", "unit": "report", "filters": [], "tags": [], "text": [], "meaning": null,
+      "content_logic": "all", "content_scope": "latest", "near": null, "players": [], "group_by": "scout_name", "aggregate": null,
+      "sort": null, "limit": null, "assumptions": []
+    }
+  },
+  {
+    "question": "Reports per month",
+    "route": "data", "reply": null,
+    "spec": {
+      "intent": "group_count", "unit": "report", "filters": [], "tags": [], "text": [], "meaning": null,
+      "content_logic": "all", "content_scope": "latest", "near": null, "players": [], "group_by": "report_month", "aggregate": null,
+      "sort": null, "limit": null, "assumptions": []
+    }
+  },
+  {
+    "question": "Average potential score per position",
+    "route": "data", "reply": null,
+    "spec": {
+      "intent": "aggregate", "unit": "player", "filters": [], "tags": [], "text": [], "meaning": null,
+      "content_logic": "all", "content_scope": "latest", "near": null, "players": [], "group_by": "position",
+      "aggregate": { "fn": "avg", "field": "overall_potential_score" }, "sort": null, "limit": null, "assumptions": []
+    }
+  },
+  {
+    "question": "What is the highest father's height?",
+    "route": "data", "reply": null,
+    "spec": {
+      "intent": "aggregate", "unit": "player", "filters": [], "tags": [], "text": [], "meaning": null,
+      "content_logic": "all", "content_scope": "latest", "near": null, "players": [], "group_by": null,
+      "aggregate": { "fn": "max", "field": "father_height" }, "sort": null, "limit": null, "assumptions": []
+    }
+  },
+  {
+    "question": "Which players have improved the most?",
+    "route": "data", "reply": null,
+    "spec": {
+      "intent": "list", "unit": "player", "filters": [{ "field": "score_change", "op": "gt", "value": "0" }], "tags": [], "text": [], "meaning": null,
+      "content_logic": "all", "content_scope": "latest", "near": null, "players": [], "group_by": null, "aggregate": null,
+      "sort": { "field": "score_change", "direction": "desc" }, "limit": 10, "assumptions": []
+    }
+  },
+  {
+    "question": "How many reports have a report count filter?",
+    "route": "data", "reply": null,
+    "spec": {
+      "intent": "count", "unit": "report", "filters": [{ "field": "report_count", "op": "gte", "value": "2" }], "tags": [], "text": [], "meaning": null,
+      "content_logic": "all", "content_scope": "latest", "near": null, "players": [], "group_by": null, "aggregate": null,
+      "sort": null, "limit": null, "assumptions": []
+    }
+  },
+  {
+    "question": "Tell me about Player 12",
+    "route": "data", "reply": null,
+    "spec": {
+      "intent": "profile", "unit": "player", "filters": [], "tags": [], "text": [], "meaning": null,
+      "content_logic": "all", "content_scope": "latest", "near": null, "players": ["Player 12"], "group_by": null, "aggregate": null,
+      "sort": null, "limit": null, "assumptions": []
+    }
+  },
+  {
+    "question": "Tell me about Player 99999",
+    "route": "data", "reply": null,
+    "spec": {
+      "intent": "profile", "unit": "player", "filters": [], "tags": [], "text": [], "meaning": null,
+      "content_logic": "all", "content_scope": "latest", "near": null, "players": ["Player 99999"], "group_by": null, "aggregate": null,
+      "sort": null, "limit": null, "assumptions": []
+    }
+  },
+  {
+    "question": "Compare Player 12 and Player 40",
+    "route": "data", "reply": null,
+    "spec": {
+      "intent": "compare", "unit": "player", "filters": [], "tags": [], "text": [], "meaning": null,
+      "content_logic": "all", "content_scope": "latest", "near": null, "players": ["Player 12", "Player 40"], "group_by": null, "aggregate": null,
+      "sort": null, "limit": null, "assumptions": []
+    }
+  },
+  {
+    "question": "Which player has the best scout comment?",
+    "spec": {
+      "intent": "comment_analysis", "filters": [], "tags": [], "text": [], "content_logic": "all",
+      "near": null, "group_by": null, "sort": { "field": "overall_score", "direction": "desc" }, "limit": 8, "assumptions": []
+    }
+  },
+  {
+    "question": "Who is described as the best leader?",
+    "route": "data", "reply": null,
+    "spec": {
+      "intent": "comment_analysis", "unit": "player", "filters": [], "tags": [], "text": [],
+      "meaning": { "query": "He is a natural leader who leads his teammates", "fields": ["any"] },
+      "content_logic": "all", "content_scope": "all", "near": null, "players": [], "group_by": null, "aggregate": null,
+      "sort": null, "limit": 8, "assumptions": []
+    }
+  },
+  {
+    "question": "Show the centre-backs",
+    "route": "data", "reply": null,
+    "spec": {
+      "intent": "list", "unit": "player", "filters": [{ "field": "position", "op": "contains", "value": "centre-back" }], "tags": [], "text": [], "meaning": null,
+      "content_logic": "all", "content_scope": "latest", "near": null, "players": [], "group_by": null, "aggregate": null,
+      "sort": null, "limit": null, "assumptions": []
+    }
+  },
+  {
+    "question": "only the left-footed ones",
+    "route": "data", "reply": null,
+    "spec": {
+      "intent": "list", "unit": "player",
+      "filters": [{ "field": "position", "op": "contains", "value": "centre-back" }, { "field": "strong_foot", "op": "eq", "value": "Left" }],
+      "tags": [], "text": [], "meaning": null,
+      "content_logic": "all", "content_scope": "latest", "near": null, "players": [], "group_by": null, "aggregate": null,
+      "sort": null, "limit": null, "assumptions": []
+    }
+  },
+  { "question": "Hi there!", "route": "general", "reply": null, "spec": null },
+  { "question": "What is a false nine?", "route": "general", "reply": null, "spec": null },
+  { "question": "What can you do?", "route": "help", "reply": null, "spec": null },
+  { "question": "Show me the good ones", "route": "clarify", "reply": "Good in what way – overall score, potential, or a specific skill?", "spec": null },
+  { "question": "Delete Player 12", "route": "refuse", "reply": "I can only read the scouting data – I can't change or delete anything.", "spec": null },
+  {
+    "question": "injection attempt",
+    "spec": {
+      "intent": "count",
+      "filters": [
+        { "field": "position", "op": "eq", "value": "'; DROP TABLE players; --" },
+        { "field": "password", "op": "eq", "value": "x" }
+      ],
+      "tags": [], "text": [{ "fields": ["any"], "any_of": ["x') | !(y"] }], "content_logic": "all", "near": null, "group_by": null, "sort": null, "limit": null, "assumptions": []
+    }
+  }
+]

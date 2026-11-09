@@ -85,7 +85,11 @@ const matches = crudRouter({
 });
 
 // ---------- reports ----------
-const reportSelect = `SELECT t.*, to_char(t.report_date, 'YYYY-MM-DD') AS report_date,
+// Explicit columns: reports also holds internal full-text vectors (tsv_*) for the chatbot, which the API must not return
+const reportSelect = `SELECT t.id, t.player_id, t.match_id, t.scout_id, to_char(t.report_date, 'YYYY-MM-DD') AS report_date,
+    t.stage_of_growth, t.height_now, t.height_now_mid, t.physical, t.mental, t.technical, t.tactical, t.deadball, t.x_factor,
+    t.score_physical, t.score_mental, t.score_technical, t.score_tactical, t.score_deadball, t.score_x_factor,
+    t.overall_score, t.overall_potential_score, t.overall_comment, t.recommendation, t.created_at, t.updated_at,
     p.name AS player_name, p.age_group AS player_age_group, p.position AS player_position,
     s.name AS scout_name, m.event, to_char(m.match_date, 'YYYY-MM-DD') AS match_date,
     ht.name AS home_team, at.name AS away_team

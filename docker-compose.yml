@@ -1,14 +1,48 @@
 services:
   db:
-    image: postgres:16
+    # Postgres 16 + pgvector (vector search for the chatbot). Same data format as postgres:16.
+    image: pgvector/pgvector:0.8.0-pg16
     container_name: sporto_poc_db
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: sporto_poc
+    # Tuned for ~1M reports on a laptop-sized Docker VM
+    command: >
+      postgres
+      -c shared_buffers=1GB
+      -c effective_cache_size=3GB
+      -c work_mem=32MB
+      -c maintenance_work_mem=1GB
+      -c max_parallel_workers_per_gather=4
+      -c max_wal_size=4GB
+      -c random_page_cost=1.1
+    shm_size: 1gb
     ports:
       - "5432:5432"
     volumes:
       - sporto_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sporto_poc"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    container_name: sporto_poc_api
+    env_file: .env
+    environment:
+      PORT: 4000
+      DATABASE_URL: postgres://postgres:postgres@db:5432/sporto_poc
+      # Read-only role used for every chatbot query (created by scripts/migrate.js)
+      CHAT_DATABASE_URL: postgres://chat_reader:chat_reader@db:5432/sporto_poc
+    ports:
+      - "4000:4000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   sporto_pgdata:

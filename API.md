@@ -252,3 +252,40 @@ Dashboard-style summary.
 | matches | GET `/api/matches` | GET `/:id` | POST | PUT/PATCH `/:id` | DELETE `/:id` | GET `/:id/reports` |
 | teams | GET `/api/teams` | GET `/:id` | POST | PUT/PATCH `/:id` | DELETE `/:id` | GET `/:id/players` |
 | scouts | GET `/api/scouts` | GET `/:id` | POST | PUT/PATCH `/:id` | DELETE `/:id` | GET `/:id/reports` |
+
+---
+
+## Chatbot – `/api/chat`
+
+Natural-language questions about players. The AI only converts the question into a structured query; the numbers come from the database.
+
+### `POST /api/chat`
+Request:
+```json
+{ "message": "How many players live within 1 hour from Ikast?", "conversation_id": "optional – send back the id from the previous reply for follow-ups" }
+```
+`message` is required, max 500 characters. Follow-ups such as "only the left-footed ones" work when the same `conversation_id` is sent (conversations expire after 30 min).
+
+Response `200`:
+```json
+{
+  "conversation_id": "3f0c…",
+  "answer": "86 players match.",
+  "intent": "count",                 // count | list | group_count | comment_analysis
+  "count": 86,
+  "players": [],                     // filled for list / comment_analysis (max 100), each with player_id, report_id, name, position, team_name, location, age_group, overall_score, …
+  "groups": [{ "key": "Left back", "count": 12 }],   // only for group_count
+  "notes": ["Father's height is recorded for only 8 of 27 players matching your other criteria; players without it are not counted."],
+  "assumptions": ["Player locations are municipalities, measured from their centre; driving time is calculated by road routing."],
+  "interpreted": ["lives within 60 min drive of Ikast (7 matching locations, routed times)"],   // show this so admins can verify the numbers
+  "spec": { "…": "the structured query that was executed" },
+  "sent_to_llm": false,              // true only when scout comment text was sent to the AI (comment_analysis)
+  "cached": { "plan": false, "result": false },
+  "timings": { "llm_ms": 640, "db_ms": 4, "total_ms": 655 }
+}
+```
+Errors: `400` missing/too long message · `422` question could not be turned into a valid query · `502` AI provider failed/timed out · `503` AI provider not configured (no `OPENAI_API_KEY`).
+
+### `GET /api/chat/stream?message=…&conversation_id=…`
+Same as above as Server-Sent Events, so the UI can show progress and stream comment analysis:
+`event: status` `{text}` → `event: token` `{text}` (only for comment analysis) → `event: result` (same body as POST) or `event: error` `{status, error}`.

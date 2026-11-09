@@ -1,0 +1,16 @@
+# Render Blueprint: creates the API web service from the Dockerfile. Database = Neon (external).
+services:
+  - type: web
+    name: sporto-api
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - { key: NODE_ENV, value: production }
+      - { key: DATABASE_URL, sync: false }          # Neon DIRECT (non-pooled) connection string, owner role
+      - { key: CHAT_DATABASE_URL, sync: false }     # Neon DIRECT connection string, chat_reader role
+      - { key: OPENAI_API_KEY, sync: false }
+      - { key: CORS_ORIGIN, sync: false }           # https://<your-app>.vercel.app
+      - { key: EMBEDDING_INTERVAL_MS, value: "60000" }  # poll less often so Neon can sleep
+      - { key: GEO_USER_AGENT, value: "sporto-poc-backend/1.0 (srrgkp65@gmail.com)" }

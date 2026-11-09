@@ -4,20 +4,34 @@ const cors = require('cors');
 const pool = require('./db/pool');
 const { HttpError } = require('./utils/crud');
 const { scouts, teams, players, matches, reports, stats } = require('./routes/resources');
+const chat = require('./routes/chat');
+const { clearCaches } = require('./chat/service');
+const { accessKey, required: authRequired } = require('./middleware/access');
 
 const app = express();
-app.use(cors());
+// CORS_ORIGIN = comma-separated list of allowed frontend origins (default: any)
+const origins = (process.env.CORS_ORIGIN || '').split(',').map((o) => o.trim().replace(/\/$/, '')).filter(Boolean);
+app.use(cors(origins.length ? { origin: origins } : undefined));
 app.use(express.json({ limit: '1mb' }));
 
 app.get('/health', async (req, res) => {
   try {
     await pool.query('SELECT 1');
-    res.json({ status: 'ok', db: 'up' });
+    res.json({ status: 'ok', db: 'up', auth_required: authRequired() });
   } catch (e) {
     res.status(503).json({ status: 'error', db: 'down', message: e.message });
   }
 });
 
+app.use('/api', accessKey);
+
+// Any successful write invalidates the chatbot's result cache so answers never go stale
+app.use('/api', (req, res, next) => {
+  if (req.method !== 'GET' && !req.originalUrl.startsWith('/api/chat')) res.on('finish', () => { if (res.statusCode < 400) clearCaches(); });
+  next();
+});
+
+app.use('/api/chat', chat);
 app.use('/api/players', players);
 app.use('/api/reports', reports);
 app.use('/api/matches', matches);
@@ -49,6 +63,9 @@ app.use((err, req, res, next) => {
 const port = process.env.PORT || 3000;
 if (require.main === module) {
   app.listen(port, () => console.log(`API listening on http://localhost:${port}`));
+  require('./chat/embedder').startWorker(); // fills embeddings for new report text in the background
+  // warm the chatbot's vocabulary cache so the first question doesn't pay for it
+  require('./chat/vocabulary').getVocabulary().catch((e) => console.error('vocabulary warm-up failed:', e.message));
 }
 
 module.exports = app;

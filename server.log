@@ -2,6 +2,23 @@
 > sporto-poc-backend@1.0.0 start
 > node src/server.js
 
-◇ injected env (2) from .env
+◇ injected env (15) from .env
 ◇ injected env (0) from .env
 API listening on http://localhost:4000
+[chat] 2026-11-03T16:55:37.383Z intent=list count=2 openai_plan=called(5470ms) openai_comments=no db=30ms total=12088ms q="who all are the golden players in the reports ?"
+[chat] 2026-11-03T16:56:10.611Z intent=count count=41 openai_plan=called(1988ms) openai_comments=no db=18ms total=2006ms q="how many players are recomended by the scouts"
+[chat] 2026-11-03T16:56:45.692Z intent=list count=41 openai_plan=called(2325ms) openai_comments=no db=29ms total=2354ms q="which player have the highest fathers height in the list of players we have"
+[chat] 2026-11-03T16:57:04.509Z intent=count count=86 openai_plan=called(2321ms) openai_comments=no db=2ms total=2349ms q="How many players live within 1 hour from Ikast?"
+[chat] 2026-11-03T16:58:49.983Z intent=count count=86 openai_plan=cached(no call) openai_comments=no db=3ms total=14ms q="How many players live within 1 hour from Ikast?"
+[chat] 2026-11-03T16:59:07.854Z intent=list count=2 openai_plan=called(3406ms) openai_comments=no db=14ms total=3434ms q="GIve me the list of golden players that we have"
+[chat] 2026-11-03T16:59:24.581Z intent=list count=2 openai_plan=called(2020ms) openai_comments=no db=17ms total=2054ms q="give me the list of players who have an overall score more than 4"
+[chat] 2026-11-03T16:59:54.776Z intent=count count=17 openai_plan=called(2740ms) openai_comments=no db=2ms total=2763ms q="How many players have the scout recomended give me the numbers"
+[chat] 2026-11-03T17:00:17.483Z intent=count count=17 openai_plan=called(2726ms) openai_comments=no db=0ms total=2739ms q="not that i need the number of players whom the sout have recomended"
+[chat] 2026-11-03T17:01:14.662Z intent=count count=86 openai_plan=cached(no call) openai_comments=no db=3ms total=59ms q="How many players live within 1 hour from Ikast?"
+[chat] 2026-11-03T17:01:36.456Z intent=count count=17 openai_plan=called(2411ms) openai_comments=no db=5ms total=2437ms q="How many players have the scout recomended"
+[chat] 2026-11-03T17:02:11.173Z intent=count count=86 openai_plan=cached(no call) openai_comments=no db=0ms total=20ms q="How many players live within 1 hour from Ikast?"
+[chat] 2026-11-03T17:02:25.036Z intent=count count=2 openai_plan=called(2175ms) openai_comments=no db=6ms total=2210ms q="HOw many golden boy players are there"
+[chat] 2026-11-03T17:02:38.040Z intent=list count=2 openai_plan=called(2606ms) openai_comments=no db=13ms total=2635ms q="give me the list of golden boy players"
+[chat] 2026-11-03T17:02:54.508Z intent=count count=2 openai_plan=called(2448ms) openai_comments=no db=3ms total=2469ms q="how many players have an overall score more than 4"
+[chat] 2026-11-03T17:03:00.906Z intent=list count=2 openai_plan=called(2521ms) openai_comments=no db=17ms total=2544ms q="gilve me the list"
+[chat] 2026-11-03T17:03:33.467Z intent=list count=2 openai_plan=called(2760ms) openai_comments=no db=15ms total=2793ms q="give me the player who have the maximum fathers height in our players list"
