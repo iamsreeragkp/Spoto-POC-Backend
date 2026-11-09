@@ -27,8 +27,8 @@ const setClientForTests = (c) => { client = c; };
 async function guarded(texts, opts, system = true) {
   const m = await getMasker();
   const masked = texts.map((t) => m.mask(t, opts));
-  if (system) masked[0] += TOKEN_NOTE; // first text is the system prompt
-  assertClean(m, masked);
+  assertClean(m, masked); // check the text derived from questions/reports/data first ...
+  if (system) masked[0] += TOKEN_NOTE; // ... then add the fixed instruction line (static text, no personal data)
   return { m, masked };
 }
 

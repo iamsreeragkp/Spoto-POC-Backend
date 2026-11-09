@@ -134,5 +134,5 @@ module.exports = { buildMasker, getMasker, clearPrivacyCache, setMaskerForTests,
 /** Added to every system prompt so the model copies alias tokens back verbatim instead of expanding them. */
 const TOKEN_NOTE = `
 
-Names of players and scouts are replaced by ID tokens such as ⟦P12⟧ (player) or ⟦S3⟧ (scout), because real names are never shared with you. Treat a token as the name itself and copy it EXACTLY, including the brackets, wherever that name belongs in your answer (e.g. in players or filter values). Never rewrite it as "Player 12" or any other form.`;
+Names of players and scouts are replaced by ID tokens such as ⟦P12⟧ (player) or ⟦S3⟧ (scout), because real names are never shared with you. Treat a token as the name itself and copy it EXACTLY, including the brackets, wherever that name belongs in your answer (e.g. in players or filter values). Never rewrite a token as a label with a number or in any other form.`;
 module.exports.TOKEN_NOTE = TOKEN_NOTE;

@@ -131,3 +131,16 @@ test('fails closed: if the name directory cannot be loaded nothing is sent', asy
     assert.equal(fake.calls.length, 0, 'no request was made');
   } finally { chatPool.query = origQuery; setMaskerForTests(masker); }
 });
+
+test('pseudonym-style names ("Player 12") never trip the guard on our own prompt text', async () => {
+  const m = buildMasker([{ token: '⟦P12⟧', name: 'Player 12' }, { token: '⟦P3⟧', name: 'Player 3' }, { token: '⟦S1⟧', name: 'Scout One' }]);
+  setMaskerForTests(m);
+  const fake = fakeChat(JSON.stringify({ route: 'general', reply: null, spec: null }));
+  openai.setClientForTests(fake);
+  const vocab = { tags: { physical: [{ tag: 'Speed' }], mental: [], technical: [], tactical: [], deadball: [] }, positions: [], stageOfGrowth: [], strongFoot: [], recommendations: [], ageGroups: [], scouts: ['Scout One'], locations: [] };
+  await openai.plan({ question: 'Tell me about Player 12', context: null, vocab });
+  const sent = JSON.stringify(fake.calls[0].messages);
+  assert.ok(!/Player 12|Player 3\b/.test(sent) || /⟦P12⟧/.test(sent));
+  assert.match(sent, /⟦P12⟧/);
+  setMaskerForTests(masker);
+});
