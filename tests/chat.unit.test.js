@@ -207,3 +207,11 @@ test('defaultTextScope: keyword searches in comments look at all reports unless 
   assert.equal(defaultTextScope('How many reports mention speed?', rep), rep, 'report unit untouched');
   assert.match(defaultTextScope('How many players mention speed?', plan(['comment'])).spec.assumptions.join(' '), /all of each player/);
 });
+
+test('normalizeSpec: player names lose quotes and a leading "Player" (but "Player 12" stays)', () => {
+  const p = (names) => normalizeSpec({ intent: 'profile', players: names }, vocab).spec.players;
+  assert.deepEqual(p(['Player Jonas Ravn']), ['Jonas Ravn']);
+  assert.deepEqual(p(['player Jonas Ravn', '“Anna Testsen”']), ['Jonas Ravn', 'Anna Testsen']);
+  assert.deepEqual(p(['Player 12']), ['Player 12']);
+  assert.deepEqual(p(['Alex']), ['Alex']);
+});

@@ -229,7 +229,8 @@ function normalizeSpec(raw, vocab) {
     const mins = Number(raw.near.max_minutes);
     if (Number.isFinite(mins) && mins > 0 && mins <= 600) spec.near = { place: String(raw.near.place).trim().slice(0, 80), max_minutes: mins };
   }
-  spec.players = [...new Set((raw.players || []).filter((p) => typeof p === 'string' && p.trim()).map((p) => p.trim().slice(0, 80)))].slice(0, MAX_PLAYERS);
+  spec.players = [...new Set((raw.players || []).filter((p) => typeof p === 'string' && p.trim())
+    .map((p) => p.replace(/[\u201C\u201D\u201E"`]/g, ' ').replace(/^\s*player\s+(?!\d)/i, '').replace(/\s+/g, ' ').trim().slice(0, 80)).filter(Boolean))].slice(0, MAX_PLAYERS);
 
   if (GROUP_FIELDS.includes(raw.group_by) && usable(raw.group_by)) spec.group_by = raw.group_by;
   if (raw.aggregate && AGG_FNS.includes(raw.aggregate.fn) && NUM_FIELDS.includes(raw.aggregate.field) && usable(raw.aggregate.field)) {

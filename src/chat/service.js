@@ -162,19 +162,36 @@ async function execute(q) {
 }
 
 /** names -> { ids, missing: [name], ambiguous: [{name, options}] } */
+/** "Player Jonas Ravn", “Jonas Ravn” or 'jonas ravn.' -> "Jonas Ravn". A leading "Player" is dropped unless a number follows ("Player 12"). */
+const cleanPlayerName = (name) => String(name).replace(/[\u201C\u201D\u201E"'`]/g, ' ').replace(/^\s*player\s+(?!\d)/i, '').replace(/[.,;:!?]+\s*$/, '').replace(/\s+/g, ' ').trim();
+const likePattern = (s) => `%${s.replace(/[%_\\]/g, ' ').trim()}%`;
+
 async function resolvePlayers(names) {
-  const ids = [], missing = [], ambiguous = [];
-  for (const name of names) {
+  const ids = [], missing = [], ambiguous = [], suggestions = {};
+  for (const typed of names) {
+    const name = cleanPlayerName(typed) || String(typed).trim();
     const exact = await chatPool.query('SELECT player_id, player_name FROM player_latest WHERE lower(player_name) = lower($1) LIMIT 2', [name]);
     if (exact.rows.length === 1) { ids.push(exact.rows[0].player_id); continue; }
-    const fuzzy = await chatPool.query(
-      `SELECT player_id, player_name FROM player_latest WHERE player_name ILIKE $1 ORDER BY length(player_name), player_name LIMIT 6`,
-      [`%${name.replace(/[%_\\]/g, ' ').trim()}%`]);
-    if (fuzzy.rows.length === 1) ids.push(fuzzy.rows[0].player_id);
-    else if (!fuzzy.rows.length) missing.push(name);
-    else ambiguous.push({ name, options: fuzzy.rows.map((r) => r.player_name) });
+    let found = (await chatPool.query(
+      'SELECT player_id, player_name FROM player_latest WHERE player_name ILIKE $1 ORDER BY length(player_name), player_name LIMIT 6', [likePattern(name)])).rows;
+    // words in any order ("Ravn Jonas") or with a typo in one word: every word of 3+ letters must appear in the name
+    const words = name.split(/[\s\-]+/).filter((w) => w.length >= 3);
+    if (!found.length && words.length > 1) {
+      found = (await chatPool.query(
+        `SELECT player_id, player_name FROM player_latest WHERE ${words.map((_, i) => `player_name ILIKE $${i + 1}`).join(' AND ')} ORDER BY length(player_name), player_name LIMIT 6`,
+        words.map(likePattern))).rows;
+    }
+    if (found.length === 1) ids.push(found[0].player_id);
+    else if (!found.length) {
+      missing.push(typed);
+      if (words.length) { // "did you mean": players sharing any word with what was typed
+        const sim = await chatPool.query(
+          `SELECT player_name FROM player_latest WHERE ${words.map((_, i) => `player_name ILIKE $${i + 1}`).join(' OR ')} ORDER BY length(player_name), player_name LIMIT 3`, words.map(likePattern));
+        if (sim.rows.length) suggestions[typed] = sim.rows.map((r) => r.player_name);
+      }
+    } else ambiguous.push({ name: typed, options: found.map((r) => r.player_name) });
   }
-  return { ids: [...new Set(ids)], missing, ambiguous };
+  return { ids: [...new Set(ids)], missing, ambiguous, suggestions };
 }
 
 const REPORTS_SQL = `SELECT * FROM (
@@ -313,8 +330,9 @@ async function answerData(message, planned, opts, timings) {
       const a = r.ambiguous[0];
       return { ...base, route: 'clarify', answer: `Which player do you mean by “${a.name}”: ${a.options.join(', ')}?`, count: null };
     }
-    if (!r.ids.length) return { ...base, answer: `I couldn't find a player called ${r.missing.map((m) => `“${m}”`).join(' or ')}.`, count: 0 };
-    if (r.missing.length) notes.push(`Not found: ${r.missing.join(', ')}.`);
+    const didYouMean = (m) => (r.suggestions && r.suggestions[m] ? ` Did you mean ${r.suggestions[m].join(', ')}?` : '');
+    if (!r.ids.length) return { ...base, answer: `I couldn't find a player called ${r.missing.map((m) => `“${m}”`).join(' or ')}.${r.missing.map(didYouMean).join('')}`, count: 0 };
+    if (r.missing.length) notes.push(`Not found: ${r.missing.join(', ')}.${r.missing.map(didYouMean).join('')}`);
     if (r.ambiguous.length) notes.push(`Ambiguous, left out: ${r.ambiguous.map((a) => `${a.name} (${a.options.slice(0, 3).join(', ')}…)`).join('; ')}.`);
     spec.resolvedPlayerIds = r.ids;
   }
