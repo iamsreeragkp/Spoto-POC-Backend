@@ -12,7 +12,7 @@ const openai = require('../src/chat/llm/openai');
 const embeddings = require('../src/chat/embeddings');
 
 const PLAYERS = [
-  { token: '⟦P1⟧', name: 'Anna Testsen' }, { token: '⟦P2⟧', name: 'Alex' }, { token: '⟦P3⟧', name: 'André Marlowe Busk Kranz' },
+  { token: '⟦P1⟧', name: 'Anna Testsen' }, { token: '⟦P2⟧', name: 'Alex' }, { token: '⟦P3⟧', name: 'André Marlowe Berg Kranz' },
   { token: '⟦P4⟧', name: 'Carl Baker' }, { token: '⟦P5⟧', name: 'Carl Eklund Jahn' }, { token: '⟦P6⟧', name: 'Bjørn Eklund' },
 ];
 const SCOUTS = [{ token: '⟦S1⟧', name: 'Jonas Lindqvist' }, { token: '⟦S2⟧', name: 'Rolf Lund Holm' }];
@@ -31,7 +31,7 @@ test('full names become reversible aliases; lone parts are anonymised; ambiguous
   assert.match(shared, /^⟦N\d+⟧ was good$/, 'two players called Carl: opaque part token, no name');
   assert.equal(masker.unmask(shared), 'Carl was good', 'and it translates back');
   assert.equal(masker.mask('Carl was good', { allowParts: false }), '[name] was good');
-  assert.equal(masker.mask('Andre Marlowe Busk Kranz'), '⟦P3⟧', 'accent-folded spelling');
+  assert.equal(masker.mask('Andre Marlowe Berg Kranz'), '⟦P3⟧', 'accent-folded spelling');
   assert.equal(masker.mask('Reports by Jonas Lindqvist'), 'Reports by ⟦S1⟧');
   assert.equal(masker.mask('He is composed and fast'), 'He is composed and fast', 'ordinary words untouched');
   assert.equal(masker.unmask('Compare ⟦P1⟧ and ⟦P2⟧ (scout ⟦S2⟧)'), 'Compare Anna Testsen and Alex (scout Rolf Lund Holm)');

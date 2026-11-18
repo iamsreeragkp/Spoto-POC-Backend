@@ -48,8 +48,8 @@ function defaultTextScope(message, result) {
     assumptions: [...(s.assumptions || []), 'Searched all of each player\u2019s reports (add \u201cin the latest report\u201d to limit it).'].slice(0, 8) } };
 }
 
-// "find players named Adin" -> "And Carl": the planner sometimes keeps the old name and adds the new one (name contains both, which
-// matches nobody). Two name filters are only meaningful when one is part of the other ("Adin" + "Adin Destanovic"); otherwise the
+// "find players named Anna" -> "And Carl": the planner sometimes keeps the old name and adds the new one (name contains both, which
+// matches nobody). Two name filters are only meaningful when one is part of the other ("Anna" + "Anna Testsen"); otherwise the
 // newest replaces the older ones.
 function collapseNameFilters(result) {
   const s = result && result.route === 'data' && result.spec;

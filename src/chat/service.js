@@ -162,7 +162,7 @@ async function execute(q) {
 }
 
 /** names -> { ids, missing: [name], ambiguous: [{name, options}] } */
-/** "Player Jonas Ravn", “Jonas Ravn” or 'jonas ravn.' -> "Jonas Ravn". A leading "Player" is dropped unless a number follows ("Player 12"). */
+/** "Player Jonas Lindqvist", “Jonas Lindqvist” or 'anna testsen.' -> "Jonas Lindqvist". A leading "Player" is dropped unless a number follows ("Player 12"). */
 const cleanPlayerName = (name) => String(name).replace(/[\u201C\u201D\u201E"'`]/g, ' ').replace(/^\s*player\s+(?!\d)/i, '').replace(/[.,;:!?]+\s*$/, '').replace(/\s+/g, ' ').trim();
 const likePattern = (s) => `%${s.replace(/[%_\\]/g, ' ').trim()}%`;
 
