@@ -71,7 +71,7 @@ const CASES = [
   ['How many players are "JL Top 18 in Denmark."',
     async (r, s) => r.intent === 'count' && !filter(s, 'recommendation') && r.count === await byReport(s, "r.x_factor ILIKE '%jl top 18%' OR r.overall_comment ILIKE '%jl top 18%'")],
   ['Which Striker player consistently shows great results with speed? Give me top-3 under 16 y.o. and explain your ranking.',
-    async (r, s) => r.intent === 'list' && s.limit === 3 && r.players.length <= 3 && !s.meaning && filter(s, 'age_group') && !filter(s, 'stage_of_growth')
+    async (r, s) => ['list', 'comment_analysis'].includes(r.intent) && s.limit === 3 && r.players.length <= 3 && !s.meaning && filter(s, 'age_group') && !filter(s, 'stage_of_growth')
       && r.count === await byReport(s, SPEED, "pl.position = 'No. 9' AND pl.age_group >= 2011")],
   ['Find players taller than 180 cm who demonstrate good leadership qualities and speed.',
     (r, s) => r.count === 0 && !filter(s, 'stage_of_growth') && has(r.notes, (x) => /range from/.test(x))],
@@ -128,6 +128,14 @@ const CASES = [
   ['{ONE} - find all the reports for this player and compare them',
     (r) => r.intent === 'compare' && /only one report/.test(r.answer)],
   ['Compare {A} and {B}', (r) => r.intent === 'compare' && r.count === 2],
+
+  // ranking + "explain why": the shortlisted reports are read and the ranking justified; the shortlist is the top of the score ranking
+  ['Find me the top-3 best player which were ever assessed and explain why are they the best ones and the most promising.',
+    async (r, s) => {
+      const top = (await pool.query('SELECT player_name FROM player_latest ORDER BY overall_score DESC NULLS LAST, overall_potential_score DESC NULLS LAST, player_name LIMIT 3')).rows.map((x) => x.player_name);
+      return r.intent === 'comment_analysis' && s.limit === 3 && r.players.length === 3 && r.players.map((p) => p.name).join('|') === top.join('|')
+        && (!r.sent_to_llm || top.some((nme) => r.answer.includes(nme)));
+    }, { comments: false }],
 
   // ---- follow-up conversations ----
   [['Show the centre-backs', 'only the left-footed ones', 'how many of them are born in 2012?'],

@@ -128,7 +128,11 @@ const relation = (spec) => (spec.unit === 'report' ? 'report_facts' : 'player_la
 
 function orderBy(spec, relevance) {
   const sort = spec.sort && SORT_FIELDS.includes(spec.sort.field) ? spec.sort : null;
-  if (sort) return `pl.${FIELDS[sort.field].col} ${sort.direction === 'asc' ? 'ASC' : 'DESC'} NULLS LAST, pl.player_name ASC`;
+  if (sort) {
+    const dir = sort.direction === 'asc' ? 'ASC' : 'DESC';
+    const tie = { overall_score: 'overall_potential_score', overall_potential_score: 'overall_score' }[sort.field]; // the other score breaks ties
+    return `pl.${FIELDS[sort.field].col} ${dir} NULLS LAST${tie && spec.unit !== 'report' ? `, pl.${FIELDS[tie].col} ${dir} NULLS LAST` : ''}, pl.player_name ASC`;
+  }
   const def = spec.unit === 'report'
     ? 'pl.report_date DESC NULLS LAST, pl.report_id DESC'
     : "(pl.recommendation ILIKE 'Golden%') DESC, pl.overall_score DESC NULLS LAST, pl.overall_potential_score DESC NULLS LAST, pl.player_name ASC";

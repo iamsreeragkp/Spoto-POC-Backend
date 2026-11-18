@@ -102,4 +102,32 @@ function toCompareReports(message, result) {
     assumptions: [...(s.assumptions || []), 'Compared this player\u2019s reports with each other.'].slice(0, 8) } };
 }
 
-module.exports = { toCompareReports, carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, REFERS_BACK };
+// "top 3 best players ... and explain why": a list with a ranking plus a request to explain is a judgement over what the scouts wrote
+// (comment_analysis reads the shortlisted reports and justifies the ranking). Without a request to explain it stays a plain ranked list.
+const EXPLAIN_WORDS = /\b(?:explain|why|reasons?|justify|what makes)\b/i;
+function explainToAnalysis(message, result) {
+  const s = result && result.route === 'data' && result.spec;
+  if (!s || s.intent !== 'list' || s.unit !== 'player' || !EXPLAIN_WORDS.test(message)) return result;
+  if (!s.sort && !(s.limit && s.limit <= 10)) return result;
+  return { ...result, spec: { ...s, intent: 'comment_analysis', limit: Math.min(s.limit || 8, 8),
+    assumptions: [...(s.assumptions || []), 'You asked for an explanation, so the shortlisted reports were read and the ranking explained.'].slice(0, 8) } };
+}
+
+// "players with "JL top18 in Denmark"" is not a name search: a real player name always reaches the planner as a name token (see
+// privacy.js), so a player_name filter in a question without any name token (and without "name/named/called") is a keyword search.
+// Name filters carried over from the previous question are left alone.
+function nameFiltersNeedAName(message, result, lastSpec, maskFn) {
+  const s = result && result.route === 'data' && result.spec;
+  if (!s || !maskFn) return result;
+  const old = new Set(((lastSpec && lastSpec.filters) || []).filter((f) => f.field === 'player_name').map((f) => String(f.value).toLowerCase()));
+  const fresh = (s.filters || []).filter((f) => f.field === 'player_name' && !old.has(String(f.value).toLowerCase()));
+  if (!fresh.length) return result;
+  if (/\b(?:name|named|called)\b/i.test(message) || /\u27E6[PN]\d+\u27E7/.test(maskFn(message))) return result;
+  const phrase = fresh.map((f) => f.value).join(' ');
+  return { ...result, spec: { ...s,
+    filters: (s.filters || []).filter((f) => !fresh.includes(f)),
+    text: [...(s.text || []), { fields: ['any'], any_of: [phrase], tag_matches: [] }],
+    assumptions: [...(s.assumptions || []), `\u201C${phrase}\u201D is not a player name, so it was searched for in the scouts\u2019 text.`].slice(0, 8) } };
+}
+
+module.exports = { nameFiltersNeedAName, explainToAnalysis, toCompareReports, carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, REFERS_BACK };

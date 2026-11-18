@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const chatPool = require('../db/chatPool');
 const { getLlm } = require('./llm');
 const { normalizePlan, SpecError, FIELDS } = require('./spec');
-const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, toCompareReports } = require('./followup');
+const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, toCompareReports, explainToAnalysis, nameFiltersNeedAName } = require('./followup');
 const { foldText, foldSql, containsPattern } = require('./fold');
 const { getMasker, aliasPlayer } = require('./privacy');
 const { getVocabulary, invalidateVocabulary } = require('./vocabulary');
@@ -141,7 +141,9 @@ async function plan(message, context, vocab, timings) {
     throw new ChatError(502, 'The AI provider could not interpret the question right now. Please try again.');
   }
   timings.llm_ms = Date.now() - t0;
-  let result = defaultRecommendationScope(message, toCompareReports(message, collapseNameFilters(defaultTextScope(message, carryFollowUp(message, context.lastSpec, mergeAdjacentNames(message, normalizePlan(raw, vocab)))), context.lastSpec)));
+  const masker = getLlm().name === 'openai' ? await getMasker() : null;
+  const maskFn = masker ? (t) => masker.mask(t, { allowParts: true }) : null; // names are only masked when text goes to the AI provider
+  let result = defaultRecommendationScope(message, explainToAnalysis(message, toCompareReports(message, collapseNameFilters(defaultTextScope(message, carryFollowUp(message, context.lastSpec, nameFiltersNeedAName(message, mergeAdjacentNames(message, normalizePlan(raw, vocab)), context.lastSpec, maskFn))), context.lastSpec))));
   // a name shared by several people ("Carl") reaches the planner masked as [name]: ask which one is meant
   if (result.route === 'data' && result.spec && (result.spec.players || []).some((p) => /\[name\]/.test(p))) {
     const names = (await getMasker()).ambiguous(message);
@@ -219,7 +221,8 @@ function reportForLlm(r, names) {
   const tags = ['physical', 'mental', 'technical', 'tactical', 'deadball'].filter((c) => r[c]).map((c) => `${c}: ${r[c]}`).join('; ');
   // the report's own player is aliased (not "[name]") so the AI knows who is meant and quotes read naturally once translated back
   const own = (t) => redactComment(aliasPlayer(t, r.player_name, r.player_id), names);
-  return [`#${r.id} (${r.player_name}, ${r.report_date || 'undated'}${r.recommendation ? `, “${r.recommendation}”` : ''})`,
+  const scores = r.overall_score != null ? `, overall score ${r.overall_score}, ${r.overall_potential_score != null ? `potential ${r.overall_potential_score}` : 'potential not recorded'}` : '';
+  return [`#${r.id} (${r.player_name}, ${r.report_date || 'undated'}${scores}${r.recommendation ? `, “${r.recommendation}”` : ''})`,
     r.x_factor ? `X-factor: ${own(r.x_factor)}` : null,
     tags ? `Tags: ${tags}` : null,
     r.overall_comment ? `Comment: ${own(r.overall_comment).slice(0, 1800)}` : null].filter(Boolean).join('\n');
@@ -516,7 +519,7 @@ async function answerData(message, planned, opts, timings) {
       const ids = shortlist.map((r) => (r.match ? r.match.report_id : r.report_id)).filter(Boolean);
       const names = await knownNames();
       const { rows: reps } = await chatPool.query(
-        `SELECT r.id, r.player_id, p.name AS player_name, r.report_date, r.recommendation, r.x_factor, r.physical, r.mental,
+        `SELECT r.id, r.player_id, p.name AS player_name, r.report_date, r.overall_score, r.overall_potential_score, r.recommendation, r.x_factor, r.physical, r.mental,
            r.technical, r.tactical, r.deadball, r.overall_comment
          FROM reports r JOIN players p ON p.id = r.player_id WHERE r.id = ANY($1::int[])`, [ids]);
       const t0 = Date.now();

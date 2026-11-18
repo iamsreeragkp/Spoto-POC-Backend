@@ -292,3 +292,36 @@ test('toCompareReports: "compare" + one named player (no other conditions) means
   untouched('compare average score by position', { filters: [{ field: 'position', op: 'contains', value: 'winger' }] });
   untouched('compare Anna Testsen and Carl Baker', { players: ['Anna Testsen', 'Carl Baker'] });
 });
+
+test('explainToAnalysis: a ranked list plus "explain why" becomes a comment analysis; without it, a plain list', () => {
+  const { explainToAnalysis } = require('../src/chat/followup');
+  const plan = (spec) => ({ route: 'data', spec: { intent: 'list', unit: 'player', sort: { field: 'overall_score', direction: 'desc' }, limit: 3, assumptions: [], ...spec } });
+  const a = explainToAnalysis('Top 3 best players and explain why they are the best', plan({}));
+  assert.equal(a.spec.intent, 'comment_analysis');
+  assert.equal(a.spec.limit, 3);
+  const p = plan({});
+  assert.equal(explainToAnalysis('Top 3 best players', p), p);
+  const c = plan({ intent: 'count' });
+  assert.equal(explainToAnalysis('how many and why', c), c);
+  const big = explainToAnalysis('List the best players and explain why', plan({ limit: null }));
+  assert.equal(big.spec.limit, 8, 'at most 8 reports are read');
+  const none = plan({ sort: null, limit: null });
+  assert.equal(explainToAnalysis('why are there so many players', none), none, 'no ranking: untouched');
+});
+
+test('nameFiltersNeedAName: a name filter without any name in the question becomes a keyword search; carried-over names stay', () => {
+  const { nameFiltersNeedAName } = require('../src/chat/followup');
+  const mask = (t) => t.replace(/Carl|Anna/g, '\u27E6N1\u27E7');
+  const plan = (value) => ({ route: 'data', spec: { filters: [{ field: 'player_name', op: 'contains', value }, { field: 'position', op: 'contains', value: 'winger' }], text: [], assumptions: [] } });
+  const a = nameFiltersNeedAName('How many players with "JL top18 in Denmark"?', plan('JL top18 in Denmark'), null, mask).spec;
+  assert.deepEqual(a.filters.map((f) => f.field), ['position']);
+  assert.deepEqual(a.text, [{ fields: ['any'], any_of: ['JL top18 in Denmark'], tag_matches: [] }]);
+  const named = plan('Carl');
+  assert.equal(nameFiltersNeedAName('And Carl', named, null, mask), named, 'a name token is in the question');
+  const withWord = plan('Zed');
+  assert.equal(nameFiltersNeedAName('players called Zed', withWord, null, mask), withWord, 'the word "called"');
+  const carried = plan('Anna');
+  assert.equal(nameFiltersNeedAName('how many of them are left-footed?', carried, { filters: [{ field: 'player_name', op: 'contains', value: 'Anna' }] }, mask), carried, 'carried over from the previous question');
+  const p = plan('x');
+  assert.equal(nameFiltersNeedAName('anything', p, null, null), p, 'no masker (mock provider): untouched');
+});
