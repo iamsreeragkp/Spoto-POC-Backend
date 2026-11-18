@@ -24,7 +24,7 @@ const FIELDS = {
   scout_name:    { col: 'scout_name', kind: 'text', desc: 'scout who wrote the report' },
   recommendation: { col: 'recommendation', kind: 'text', desc: "scout's recommendation (e.g. Golden Boy!!!)" },
   age_group:     { col: 'age_group', kind: 'num', desc: 'birth-year cohort, e.g. 2012' },
-  year_of_birth: { col: 'year_of_birth', kind: 'num', desc: 'year of birth' },
+  year_of_birth: { col: 'year_of_birth', kind: 'num', desc: 'year of birth (rarely recorded: for "born in 2012" use age_group, the birth-year cohort)' },
   jersey_number: { col: 'jersey_number', kind: 'num', sparse: true, desc: 'shirt number' },
   father_height: { col: 'father_height_mid', kind: 'num', sparse: true, desc: "father's height in cm (range midpoint)" },
   mother_height: { col: 'mother_height_mid', kind: 'num', sparse: true, desc: "mother's height in cm (range midpoint)" },
@@ -132,9 +132,10 @@ function normalizeSpec(raw, vocab) {
   // skill words (whole tag or a word of a tag, e.g. "speed" from "Pace/speed")
   const tagWords = new Set(Object.values(vocab.tags || {}).flat().flatMap((t) => [norm(t.tag), ...norm(t.tag).split(' ').filter((w) => w.length >= 4)]));
   const isPositionWord = (v) => (vocab.positions || []).some((p) => norm(p).includes(norm(v)));
-  for (const f of raw.filters || []) {
+  for (let f of raw.filters || []) {
     if (!FIELDS[f && f.field]) { warnings.push(`Ignored unknown filter field "${f && f.field}"`); continue; }
     if (!usable(f.field)) continue;
+    if (f.field === 'year_of_birth' && Number(f.value) >= 1900 && Number(f.value) <= 2100) f = { ...f, field: 'age_group' }; // the birth-year cohort is age_group
     const def = FIELDS[f.field];
     if (!OPS.includes(f.op)) { warnings.push(`Ignored unknown operator "${f.op}"`); continue; }
     let value = f.value == null ? '' : String(f.value).trim();

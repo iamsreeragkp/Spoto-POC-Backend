@@ -4,7 +4,9 @@
 // (llm/openai.js and embeddings.js), so no prompt can bypass it:
 //   - a full name becomes an alias token: "⟦P12⟧" (player id 12) or "⟦S3⟧" (scout id 3). Reversible: the AI's reply
 //     is translated back locally, so the administrator still sees real names and "tell me about <name>" still works.
-//   - any other occurrence of a name part (first name, surname) becomes "[name]". Not reversible.
+//   - a name part (first name / surname) used by exactly one person resolves to that person's token in questions; one used
+//     by several people ("Carl") becomes an opaque part token "⟦N5⟧" in questions, also reversible, so the AI can
+//     be asked to search for it without seeing it. Any other occurrence of a name part becomes "[name]" (not reversible).
 //   - a final check refuses to send anything that still contains a known name (fail closed).
 // If the name directory cannot be loaded, nothing is sent.
 //
@@ -40,8 +42,16 @@ function buildMasker(entries) {
   const uniquePart = new Map([...partOwners].filter(([, s]) => s.size === 1).map(([k, s]) => [k, [...s][0]]));
   const strings = [...new Set([...full.keys(), ...partOwners.keys()])];
   const re = wordRe(strings);
-  const byToken = new Map(entries.map((e) => [e.token, clean(e.name)]));
-  const tokenRe = /⟦([PS]\d+)⟧/g;
+  // parts shared by several people get an opaque token; the spelling shown on the way back is the one in the data
+  const spelled = new Map();
+  for (const e of entries) for (const p of clean(e.name).split(/[\s\-]+/)) if (!spelled.has(p.toLowerCase())) spelled.set(p.toLowerCase(), p);
+  const sharedKeys = [...partOwners].filter(([, s]) => s.size > 1).map(([k]) => k).sort();
+  const sharedToken = new Map(sharedKeys.map((k, i) => [k, `⟦N${i + 1}⟧`]));
+  const byToken = new Map([
+    ...entries.map((e) => [e.token, clean(e.name)]),
+    ...sharedKeys.map((k, i) => [`⟦N${i + 1}⟧`, spelled.get(k) || k.charAt(0).toUpperCase() + k.slice(1)]),
+  ]);
+  const tokenRe = /⟦([PSN]\d+)⟧/g;
 
   // allowParts: true  -> "Tell me about Anna" resolves to the one player called Anna (questions, conversation context)
   //             false -> only full names get an alias; lone name parts are anonymised (report text, comments)
@@ -51,6 +61,7 @@ function buildMasker(entries) {
       const k = m.toLowerCase();
       if (full.has(k)) return full.get(k);
       if (allowParts && uniquePart.has(k)) return uniquePart.get(k);
+      if (allowParts && sharedToken.has(k)) return sharedToken.get(k);
       return '[name]';
     });
   };
@@ -142,5 +153,5 @@ module.exports = { buildMasker, getMasker, clearPrivacyCache, setMaskerForTests,
 /** Added to every system prompt so the model copies alias tokens back verbatim instead of expanding them. */
 const TOKEN_NOTE = `
 
-Names of players and scouts are replaced by ID tokens such as ⟦P12⟧ (player) or ⟦S3⟧ (scout), because real names are never shared with you. Treat a token as the name itself and copy it EXACTLY, including the brackets, wherever that name belongs in your answer (e.g. in players or filter values). Never rewrite a token as a label with a number or in any other form.`;
+Names of players and scouts are replaced by ID tokens such as ⟦P12⟧ (player) or ⟦S3⟧ (scout), and a first name or surname shared by several people by a token such as ⟦N5⟧, because real names are never shared with you. Treat a token as the name itself and copy it EXACTLY, including the brackets, wherever that name belongs in your answer (e.g. in players or filter values). Never rewrite a token as a label with a number or in any other form.`;
 module.exports.TOKEN_NOTE = TOKEN_NOTE;

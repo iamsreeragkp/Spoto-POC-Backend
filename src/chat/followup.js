@@ -48,4 +48,20 @@ function defaultTextScope(message, result) {
     assumptions: [...(s.assumptions || []), 'Searched all of each player\u2019s reports (add \u201cin the latest report\u201d to limit it).'].slice(0, 8) } };
 }
 
-module.exports = { carryFollowUp, defaultTextScope, REFERS_BACK };
+// "find players named Adin" -> "And Carl": the planner sometimes keeps the old name and adds the new one (name contains both, which
+// matches nobody). Two name filters are only meaningful when one is part of the other ("Adin" + "Adin Destanovic"); otherwise the
+// newest replaces the older ones.
+function collapseNameFilters(result) {
+  const s = result && result.route === 'data' && result.spec;
+  if (!s) return result;
+  const names = (s.filters || []).filter((f) => f.field === 'player_name');
+  if (names.length < 2) return result;
+  const vals = names.map((f) => String(f.value).toLowerCase());
+  const longest = names[vals.indexOf([...vals].sort((a, b) => b.length - a.length)[0])];
+  const nested = vals.every((v) => String(longest.value).toLowerCase().includes(v));
+  const keep = nested ? longest : names[names.length - 1];
+  const filters = (s.filters || []).filter((f) => f.field !== 'player_name').concat(keep);
+  return { ...result, spec: { ...s, filters, assumptions: [...(s.assumptions || []), nested ? 'Used the full name.' : `Searched for the new name “${keep.value}” only.`].slice(0, 8) } };
+}
+
+module.exports = { carryFollowUp, defaultTextScope, collapseNameFilters, REFERS_BACK };

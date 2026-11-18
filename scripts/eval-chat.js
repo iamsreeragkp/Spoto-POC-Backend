@@ -14,8 +14,8 @@ const text = (s, t, field) => has(s.text, (x) => (!field || x.fields.includes(fi
 const content = (s) => s.tags.length + s.text.length + (s.meaning ? 1 : 0) > 0;
 
 // real names are read from the database when the evaluation runs, so no personal data is stored in this file
-const NAME = { A: '', B: '', SCOUT: '', FIRST: '' };
-const fill = (t) => t.replace(/\{A\}/g, NAME.A).replace(/\{B\}/g, NAME.B).replace(/\{SCOUT\}/g, NAME.SCOUT).replace(/\{FIRST\}/g, NAME.FIRST);
+const NAME = { A: '', B: '', SCOUT: '', FIRST: '', A1: '' };
+const fill = (t) => t.replace(/\{A\}/g, NAME.A).replace(/\{B\}/g, NAME.B).replace(/\{SCOUT\}/g, NAME.SCOUT).replace(/\{FIRST\}/g, NAME.FIRST).replace(/\{A1\}/g, NAME.A1);
 const n = async (sql) => Number((await pool.query(sql)).rows[0].n);
 const SPEED = "EXISTS (SELECT 1 FROM report_tags rt WHERE rt.report_id = r.id AND rt.tag = 'Speed')";
 // players matching a report-level condition, using the same scope the planner chose (latest report or any report)
@@ -91,6 +91,15 @@ const CASES = [
     async (r, s) => r.intent === 'count' && s.content_scope === 'latest'
       && r.count === await n("SELECT count(*) n FROM player_latest pl JOIN reports r ON r.id = pl.report_id WHERE r.overall_comment ~* 'jl\\s*top\\s*18' OR r.x_factor ~* 'jl\\s*top\\s*18'")],
 
+  // ---- searching by (first) name, incl. names shared by several players ----
+  ['I need to find all players with the name {FIRST}',
+    async (r, s) => r.intent === 'list' && has(s.filters, (f) => f.field === 'player_name') && r.count === await n(`SELECT count(*) n FROM player_latest WHERE player_name ILIKE '%${NAME.FIRST}%'`)],
+  [['I need to find all players with the name {A1}', 'And {FIRST}'],
+    async (r, s) => r.intent === 'list' && has(s.filters, (f) => f.field === 'player_name' && f.value === NAME.FIRST) && s.filters.length === 1
+      && r.count === await n(`SELECT count(*) n FROM player_latest WHERE player_name ILIKE '%${NAME.FIRST}%'`)],
+  ['How many players are called {FIRST}?',
+    async (r) => r.intent === 'count' && r.count === await n(`SELECT count(*) n FROM player_latest WHERE player_name ILIKE '%${NAME.FIRST}%'`)],
+
   // ---- follow-up conversations ----
   [['Show the centre-backs', 'only the left-footed ones', 'how many of them are born in 2012?'],
     async (r, s) => r.intent === 'count' && r.count === await n("SELECT count(*) n FROM player_latest WHERE position ILIKE '%centre-back%' AND strong_foot = 'Left' AND age_group = 2012")],
@@ -139,6 +148,7 @@ const pct = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s.lengt
   const two = (await pool.query('SELECT name FROM players ORDER BY id LIMIT 2')).rows;
   NAME.A = two[0].name;
   NAME.B = two[1].name;
+  NAME.A1 = two[0].name.split(' ')[0];
   NAME.SCOUT = (await one('SELECT s.name FROM scouts s JOIN reports r ON r.scout_id = s.id GROUP BY s.name ORDER BY count(*) DESC LIMIT 1')).name;
   NAME.FIRST = (await one(`SELECT split_part(name, ' ', 1) AS f FROM players GROUP BY 1 HAVING count(*) > 1 ORDER BY 1 LIMIT 1`)).f || 'Alex';
   const results = [];

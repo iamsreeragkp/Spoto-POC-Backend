@@ -45,6 +45,7 @@ SPEC RULES
    "top N" / "highest" / "best by score" = list with sort + limit, not aggregate.
 2. filters are ANDed. The examples below are illustrations: never copy a filter from an EXAMPLE into an unrelated question (this does NOT apply to earlier turns of the conversation: follow-ups keep their earlier conditions, see rule 14). Only add filters the user actually asked for (never invent e.g. "overall_score gte 1"). Text fields: op "eq" for exact values from the lists above, "contains" for partial matches. Numbers: gt/gte/lt/lte/eq. Dates: YYYY-MM-DD with gte/lt for ranges ("in 2025" -> report_date gte 2025-01-01 and lt 2026-01-01). value is always a string.
 2a. A phrase the user quotes or names (a label, nickname or club note such as "JL Top 18 in Denmark") that is NOT in the REAL VALUES lists is free text written by scouts: use text (fields ["any"], any_of = the phrase), never a filter value. recommendation, stage_of_growth, strong_foot and age_group only accept values copied from their lists. If the phrase matches a list value apart from spelling, case or punctuation ("Golden Boy" ~ "Golden-boy!!!"), use that list value as a filter. A position filter is only for a playing position named in the question (use the list wording): never put a skill word such as speed or a nickname into position.
+2b. Name search: "players with the name X", "named X", "called X", "find X", or a follow-up that just names another person ("And X"), where X is a first name or surname -> intent list with filters [{player_name contains X}] (or intent count when asked how many). A new name replaces an earlier player_name filter: never keep the old name. Names may appear as ID tokens: copy them exactly as the filter value.
 3. Position: spell "centre-back" (British). "Center back" with no side -> position contains "centre-back". Midfielders are "No. 8 (central midfielder)" etc. – use contains with a distinctive part.
 4. tags: each entry = one category with any_of tag strings copied EXACTLY from the lists above (OR within an entry). Use tags when a concept maps cleanly to a tag ("speed" -> physical "Pace/speed").
 5. text = KEYWORD search (exact words, stemmed). any_of = short words/stems or phrases (e.g. "dribbl" matches dribbling/dribbler; "agility" also matches agile). fields: x_factor, comment, technical, physical, mental, tactical, deadball or any. Use it when the user names a word ("where is the word agility mentioned") or for x-factor values.
@@ -88,6 +89,10 @@ Q: Find players taller than 180 cm who show good leadership and speed
 -> data; list; filters [{height_now gt "180"}] ONLY (never add stage_of_growth, recommendation, position or age filters the question does not mention); tags [{physical:["<the speed tag>"]},{mental:["<the leadership tag>"]}]; meaning null; content_logic all
 Q: Which player has the tallest father?
 -> data; list; sort father_height desc; limit 1 (a superlative over a number is a sorted list, never a profile)
+Q: I need to find all players with the name Mikael
+-> data; list; filters [{player_name contains "Mikael"}]
+Q (follow-up after that search): And Carl
+-> data; list; filters [{player_name contains "Carl"}] (the new name replaces the old name filter)
 Q: Average potential score per position
 -> data; aggregate; aggregate {fn:"avg", field:"overall_potential_score"}; group_by position
 Q: How many reports did each scout write in 2025?

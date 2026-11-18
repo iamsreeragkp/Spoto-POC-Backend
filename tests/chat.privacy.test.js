@@ -27,7 +27,10 @@ test('full names become reversible aliases; lone parts are anonymised; ambiguous
   assert.equal(masker.mask('tell me about alex'), 'tell me about ⟦P2⟧');
   assert.equal(masker.mask('Anna was good', { allowParts: true }), '⟦P1⟧ was good', 'unique first name resolves when allowed');
   assert.equal(masker.mask('Anna was good', { allowParts: false }), '[name] was good');
-  assert.equal(masker.mask('Carl was good', { allowParts: true }), '[name] was good', 'two players called Carl: not resolvable');
+  const shared = masker.mask('Carl was good', { allowParts: true });
+  assert.match(shared, /^⟦N\d+⟧ was good$/, 'two players called Carl: opaque part token, no name');
+  assert.equal(masker.unmask(shared), 'Carl was good', 'and it translates back');
+  assert.equal(masker.mask('Carl was good', { allowParts: false }), '[name] was good');
   assert.equal(masker.mask('Andre Marlowe Busk Kranz'), '⟦P3⟧', 'accent-folded spelling');
   assert.equal(masker.mask('Reports by Jonas Lindqvist'), 'Reports by ⟦S1⟧');
   assert.equal(masker.mask('He is composed and fast'), 'He is composed and fast', 'ordinary words untouched');

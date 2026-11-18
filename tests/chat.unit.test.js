@@ -215,3 +215,19 @@ test('normalizeSpec: player names lose quotes and a leading "Player" (but "Playe
   assert.deepEqual(p(['Player 12']), ['Player 12']);
   assert.deepEqual(p(['Alex']), ['Alex']);
 });
+
+test('normalizeSpec: "born in YYYY" on year_of_birth becomes the age_group cohort filter', () => {
+  const { spec } = normalizeSpec({ intent: 'count', filters: [{ field: 'year_of_birth', op: 'eq', value: '2012' }] }, vocab);
+  assert.deepEqual(spec.filters, [{ field: 'age_group', op: 'eq', value: 2012 }]);
+});
+
+test('collapseNameFilters: a new name replaces the old one; "Adin" + "Adin Destanovic" is one name', () => {
+  const { collapseNameFilters } = require('../src/chat/followup');
+  const plan = (...vals) => ({ route: 'data', spec: { filters: vals.map((value) => ({ field: 'player_name', op: 'contains', value })).concat([{ field: 'position', op: 'contains', value: 'winger' }]), assumptions: [] } });
+  const a = collapseNameFilters(plan('Adin Destanovic', 'Carl')).spec.filters;
+  assert.deepEqual(a.map((f) => f.value), ['winger', 'Carl']);
+  const b = collapseNameFilters(plan('Adin', 'Adin Destanovic')).spec.filters;
+  assert.deepEqual(b.filter((f) => f.field === 'player_name').map((f) => f.value), ['Adin Destanovic']);
+  const one = plan('Carl');
+  assert.equal(collapseNameFilters(one), one, 'a single name filter is untouched');
+});
