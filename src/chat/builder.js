@@ -45,6 +45,9 @@ function buildWhere(spec, near, meaningRes, { exclude } = {}) {
       if (f.op === 'contains') return parts.push(`${col} ILIKE ${add(`%${f.value}%`)}`);
       if (f.op === 'neq') return parts.push(`(${col} IS NULL OR lower(${col}) <> lower(${add(f.value)}))`);
       if (OP_SQL[f.op]) return parts.push(`${col} ${OP_SQL[f.op]} ${add(f.value)}`); // e.g. report_month >= '2025-01'
+      if (f.field === 'recommendation' && spec.unit === 'player' && spec.recommendation_scope === 'all') { // given in any of the player's reports
+        return parts.push(`EXISTS (SELECT 1 FROM reports rr WHERE rr.player_id = pl.player_id AND lower(rr.recommendation) = lower(${add(f.value)}))`);
+      }
       return parts.push(`lower(${col}) = lower(${add(f.value)})`);
     }
     const p = add(f.value);

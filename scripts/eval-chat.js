@@ -100,6 +100,16 @@ const CASES = [
   ['How many players are called {FIRST}?',
     async (r) => r.intent === 'count' && r.count === await n(`SELECT count(*) n FROM player_latest WHERE player_name ILIKE '%${NAME.FIRST}%'`)],
 
+  // a recommendation is given in one report: "golden boy players" = received it in any report; "current" = latest report only
+  ['Show me all the golden boy players',
+    async (r, s) => r.intent === 'list' && s.recommendation_scope === 'all'
+      && r.count === await n("SELECT count(DISTINCT player_id) n FROM reports WHERE recommendation ILIKE 'golden%'")],
+  ['Which players currently have a golden boy recommendation?',
+    async (r, s) => s.recommendation_scope === 'latest' && r.count === await n("SELECT count(*) n FROM player_latest WHERE recommendation ILIKE 'golden%'")],
+  ['How many players have "Scout recommends him here!" in their latest report?',
+    async (r, s) => r.intent === 'count' && s.recommendation_scope === 'latest'
+      && r.count === await n("SELECT count(*) n FROM player_latest WHERE recommendation = 'Scout recommends him here!'")],
+
   // ---- follow-up conversations ----
   [['Show the centre-backs', 'only the left-footed ones', 'how many of them are born in 2012?'],
     async (r, s) => r.intent === 'count' && r.count === await n("SELECT count(*) n FROM player_latest WHERE position ILIKE '%centre-back%' AND strong_foot = 'Left' AND age_group = 2012")],

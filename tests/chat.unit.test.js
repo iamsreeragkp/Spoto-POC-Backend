@@ -231,3 +231,14 @@ test('collapseNameFilters: a new name replaces the old one; "Anna" + "Anna Tests
   const one = plan('Carl');
   assert.equal(collapseNameFilters(one), one, 'a single name filter is untouched');
 });
+
+test('defaultRecommendationScope: a recommendation filter looks at any report unless the question says latest/current', () => {
+  const { defaultRecommendationScope } = require('../src/chat/followup');
+  const plan = (unit = 'player') => ({ route: 'data', spec: { unit, assumptions: [], filters: [{ field: 'recommendation', op: 'eq', value: 'Golden-boy!!!' }] } });
+  assert.equal(defaultRecommendationScope('Show me all the golden boy players', plan()).spec.recommendation_scope, 'all');
+  assert.equal(defaultRecommendationScope('Who currently has a golden boy recommendation?', plan()).spec.recommendation_scope, 'latest');
+  const rep = plan('report');
+  assert.equal(defaultRecommendationScope('How many reports say golden boy?', rep), rep, 'report unit untouched');
+  const none = { route: 'data', spec: { unit: 'player', filters: [{ field: 'position', op: 'contains', value: 'winger' }] } };
+  assert.equal(defaultRecommendationScope('wingers', none), none);
+});

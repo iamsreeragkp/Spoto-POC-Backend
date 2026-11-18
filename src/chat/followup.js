@@ -64,4 +64,15 @@ function collapseNameFilters(result) {
   return { ...result, spec: { ...s, filters, assumptions: [...(s.assumptions || []), nested ? 'Used the full name.' : `Searched for the new name “${keep.value}” only.`].slice(0, 8) } };
 }
 
-module.exports = { carryFollowUp, defaultTextScope, collapseNameFilters, REFERS_BACK };
+// A recommendation ("Golden-boy!!!") is something a scout gave in one particular report. "Show me the golden boy players" means players
+// who received it, not only those whose newest report still has it, so the filter looks at any report unless the question asks for the
+// latest/current one.
+function defaultRecommendationScope(message, result) {
+  const s = result && result.route === 'data' && result.spec;
+  if (!s || s.unit !== 'player' || !(s.filters || []).some((f) => f.field === 'recommendation' && f.op === 'eq')) return result;
+  if (LATEST_WORDS.test(message)) return { ...result, spec: { ...s, recommendation_scope: 'latest' } };
+  return { ...result, spec: { ...s, recommendation_scope: 'all',
+    assumptions: [...(s.assumptions || []), 'Matched a recommendation given in any of a player\u2019s reports (say \u201ccurrent\u201d or \u201clatest\u201d to use only the latest report).'].slice(0, 8) } };
+}
+
+module.exports = { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, REFERS_BACK };

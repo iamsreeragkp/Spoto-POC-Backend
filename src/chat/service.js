@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const chatPool = require('../db/chatPool');
 const { getLlm } = require('./llm');
 const { normalizePlan, SpecError, FIELDS } = require('./spec');
-const { carryFollowUp, defaultTextScope, collapseNameFilters } = require('./followup');
+const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope } = require('./followup');
 const { getMasker, aliasPlayer } = require('./privacy');
 const { getVocabulary, invalidateVocabulary } = require('./vocabulary');
 const { buildQueries } = require('./builder');
@@ -58,7 +58,7 @@ const OP_TEXT = { eq: '=', neq: '≠', gt: '>', gte: '≥', lt: '<', lte: '≤',
 function describe(spec, near, meaningRes) {
   const out = [];
   if (spec.unit === 'report') out.push('counting individual reports');
-  out.push(...spec.filters.map((f) => (['is_null', 'not_null'].includes(f.op) ? `${f.field} ${OP_TEXT[f.op]}` : `${f.field} ${OP_TEXT[f.op]} ${f.value}`)));
+  out.push(...spec.filters.map((f) => (['is_null', 'not_null'].includes(f.op) ? `${f.field} ${OP_TEXT[f.op]}` : `${f.field} ${OP_TEXT[f.op]} ${f.value}${f.field === 'recommendation' && f.op === 'eq' && spec.unit === 'player' ? (spec.recommendation_scope === 'latest' ? ' (in the latest report)' : ' (in any report)') : ''}`)));
   if (spec.players.length) out.push(`players: ${spec.players.join(', ')}`);
   spec.tags.forEach((t) => out.push(`${t.category} tag is any of: ${t.any_of.join(' / ')}`));
   spec.text.forEach((t) => {
@@ -130,7 +130,7 @@ async function plan(message, context, vocab, timings) {
     throw new ChatError(502, 'The AI provider could not interpret the question right now. Please try again.');
   }
   timings.llm_ms = Date.now() - t0;
-  let result = collapseNameFilters(defaultTextScope(message, carryFollowUp(message, context.lastSpec, normalizePlan(raw, vocab))));
+  let result = defaultRecommendationScope(message, collapseNameFilters(defaultTextScope(message, carryFollowUp(message, context.lastSpec, normalizePlan(raw, vocab)))));
   // a name shared by several people ("Carl") reaches the planner masked as [name]: ask which one is meant
   if (result.route === 'data' && result.spec && (result.spec.players || []).some((p) => /\[name\]/.test(p))) {
     const names = (await getMasker()).ambiguous(message);
@@ -391,6 +391,11 @@ async function answerData(message, planned, opts, timings) {
   const minutesByLoc = near ? new Map(near.locations.map((l) => [l.location, l.minutes])) : null;
   let rows = (exec.rows || []).map((p) => (minutesByLoc ? { ...p, drive_minutes: minutesByLoc.get(p.location) ?? null } : p));
   notes.push(...coverageNotes(exec.coverage, unitWord));
+  const recFilter = spec.unit === 'player' && spec.recommendation_scope === 'all' ? spec.filters.find((f) => f.field === 'recommendation' && f.op === 'eq') : null;
+  if (recFilter) {
+    const other = (exec.rows || []).filter((p) => String(p.recommendation || '').toLowerCase() !== String(recFilter.value).toLowerCase()).length;
+    if (other) notes.push(`${other} of the ${plural((exec.rows || []).length, 'player')} shown received “${recFilter.value}” in an earlier report; the card shows their latest recommendation.`);
+  }
   if (Number(exec.count) === 0) notes.push(...(await rangeNotes(spec, unitWord)));
 
   // evidence snippets for content searches
