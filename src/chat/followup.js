@@ -89,4 +89,17 @@ function mergeAdjacentNames(message, result) {
   return out.length === s.players.length ? result : { ...result, spec: { ...s, players: out } };
 }
 
-module.exports = { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, REFERS_BACK };
+// "<player> - find all the reports for this player and compare them": the planner sometimes returns a plain report list. When the
+// question asks to compare and only names one player (no other conditions), it is a comparison of that player's reports over time.
+function toCompareReports(message, result) {
+  const s = result && result.route === 'data' && result.spec;
+  if (!s || !/\bcompar(?:e|ing|ison)\b/i.test(message) || !['list', 'profile'].includes(s.intent)) return result;
+  const nameFilters = (s.filters || []).filter((f) => f.field === 'player_name');
+  const others = (s.filters || []).length - nameFilters.length + (s.tags || []).length + (s.text || []).length + (s.meaning ? 1 : 0) + (s.near ? 1 : 0);
+  const named = [...(s.players || []), ...(nameFilters.length ? [nameFilters.map((f) => f.value).join(' ')] : [])];
+  if (others || named.length !== 1) return result;
+  return { ...result, spec: { ...s, intent: 'compare', unit: 'player', filters: [], players: named,
+    assumptions: [...(s.assumptions || []), 'Compared this player\u2019s reports with each other.'].slice(0, 8) } };
+}
+
+module.exports = { toCompareReports, carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, REFERS_BACK };

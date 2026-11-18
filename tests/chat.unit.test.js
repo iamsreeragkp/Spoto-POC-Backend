@@ -274,3 +274,21 @@ test('normalizeSpec: keywords like "left-footed" or "golden boy players" become 
   assert.equal(f(['right winger']).filters.length, 0, 'a position is not a foot');
   assert.equal(f(['left back runs']).filters.length, 0, 'other words stay a keyword search');
 });
+
+test('toCompareReports: "compare" + one named player (no other conditions) means compare that player\u2019s reports', () => {
+  const { toCompareReports } = require('../src/chat/followup');
+  const plan = (spec) => ({ route: 'data', spec: { intent: 'list', unit: 'report', tags: [], text: [], meaning: null, near: null, players: [], assumptions: [], filters: [], ...spec } });
+  const a = toCompareReports('Anna Testsen - find all the reports for this player and compare them', plan({ filters: [{ field: 'player_name', op: 'contains', value: 'Anna Testsen' }] })).spec;
+  assert.equal(a.intent, 'compare');
+  assert.equal(a.unit, 'player');
+  assert.deepEqual(a.players, ['Anna Testsen']);
+  assert.equal(a.filters.length, 0);
+  const b = toCompareReports('compare the reports of Anna Testsen', plan({ players: ['Anna Testsen'] })).spec;
+  assert.deepEqual(b.players, ['Anna Testsen']);
+  const c = toCompareReports('Andre Kronborg compare', plan({ filters: [{ field: 'player_name', op: 'contains', value: 'Andre' }, { field: 'player_name', op: 'contains', value: 'Kronborg' }] })).spec;
+  assert.deepEqual(c.players, ['Andre Kronborg']);
+  const untouched = (msg, p) => { const r = plan(p); assert.equal(toCompareReports(msg, r), r); };
+  untouched('find all the reports for Anna Testsen', { players: ['Anna Testsen'] });
+  untouched('compare average score by position', { filters: [{ field: 'position', op: 'contains', value: 'winger' }] });
+  untouched('compare Anna Testsen and Carl Baker', { players: ['Anna Testsen', 'Carl Baker'] });
+});

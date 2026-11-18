@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const chatPool = require('../db/chatPool');
 const { getLlm } = require('./llm');
 const { normalizePlan, SpecError, FIELDS } = require('./spec');
-const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames } = require('./followup');
+const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, toCompareReports } = require('./followup');
 const { foldText, foldSql, containsPattern } = require('./fold');
 const { getMasker, aliasPlayer } = require('./privacy');
 const { getVocabulary, invalidateVocabulary } = require('./vocabulary');
@@ -12,7 +12,7 @@ const { redactComment } = require('./redact');
 const { redactionNames } = require('./names');
 const { resolveMeaning, snippets, pendingEmbeddings, clearRetrievalCache } = require('./retrieval');
 const memory = require('./memory');
-const { GENERAL_SYSTEM, helpSystem, JUDGE_SYSTEM, PROFILE_SYSTEM, COMPARE_SYSTEM } = require('./llm/prompt');
+const { GENERAL_SYSTEM, helpSystem, JUDGE_SYSTEM, PROFILE_SYSTEM, COMPARE_SYSTEM, COMPARE_REPORTS_SYSTEM } = require('./llm/prompt');
 
 const SPEC_TTL = (Number(process.env.CHAT_SPEC_CACHE_TTL_SECONDS) || 3600) * 1000;
 const RESULT_TTL = (Number(process.env.CHAT_RESULT_CACHE_TTL_SECONDS) || 60) * 1000;
@@ -141,7 +141,7 @@ async function plan(message, context, vocab, timings) {
     throw new ChatError(502, 'The AI provider could not interpret the question right now. Please try again.');
   }
   timings.llm_ms = Date.now() - t0;
-  let result = defaultRecommendationScope(message, collapseNameFilters(defaultTextScope(message, carryFollowUp(message, context.lastSpec, mergeAdjacentNames(message, normalizePlan(raw, vocab)))), context.lastSpec));
+  let result = defaultRecommendationScope(message, toCompareReports(message, collapseNameFilters(defaultTextScope(message, carryFollowUp(message, context.lastSpec, mergeAdjacentNames(message, normalizePlan(raw, vocab)))), context.lastSpec)));
   // a name shared by several people ("Carl") reaches the planner masked as [name]: ask which one is meant
   if (result.route === 'data' && result.spec && (result.spec.players || []).some((p) => /\[name\]/.test(p))) {
     const names = (await getMasker()).ambiguous(message);
@@ -223,6 +223,47 @@ function reportForLlm(r, names) {
     r.x_factor ? `X-factor: ${own(r.x_factor)}` : null,
     tags ? `Tags: ${tags}` : null,
     r.overall_comment ? `Comment: ${own(r.overall_comment).slice(0, 1800)}` : null].filter(Boolean).join('\n');
+}
+
+/** "Compare the reports of this player": a table of the player's reports (oldest first) plus, if allowed, an AI comparison. */
+async function compareOwnReports(playerId, rows, out, { message, opts, status, timings, assumptions }) {
+  const [{ rows: pls }, { rows: reps }] = await Promise.all([
+    chatPool.query('SELECT * FROM player_latest WHERE player_id = $1', [playerId]),
+    chatPool.query(REPORTS_SQL, [[playerId], 12]),
+  ]);
+  const p = pls[0];
+  if (!p) return { ...out, players: [], count: 0, answer: 'No players match.' };
+  const players = [{ ...p, name: p.player_name }];
+  const asc = [...reps].sort((a, b) => String(a.report_date || '').localeCompare(String(b.report_date || '')) || a.id - b.id);
+  const line = (r) => `• #${r.id} ${r.report_date || 'undated'} – overall ${r.overall_score ?? '–'}, potential ${r.overall_potential_score ?? '–'}${r.recommendation ? `, “${r.recommendation}”` : ''}${r.scout_name ? `, by ${r.scout_name}` : ''}`;
+  if (asc.length < 2) {
+    // a very similar name is often the same person under another spelling: point at it
+    const words = String(p.player_name).split(/[\s-]+/).filter((w) => w.length >= 3);
+    const need = Math.max(2, Math.ceil(words.length / 2));
+    const sim = words.length < 2 ? { rows: [] } : await chatPool.query(
+      `SELECT player_id, player_name, report_count, team_name, age_group FROM player_latest WHERE player_id <> $1
+         AND (${words.map((_, i) => `(${foldSql('player_name')} LIKE $${i + 2})::int`).join(' + ')}) >= ${need}
+       ORDER BY report_count DESC, player_name LIMIT 3`, [playerId, ...words.map(containsPattern)]);
+    const hint = sim.rows.length
+      ? `\n\nA very similar name exists: ${sim.rows.map((s) => `${s.player_name} (${plural(s.report_count, 'report')}${s.team_name ? `, ${s.team_name}` : ''}${s.age_group ? `, age group ${s.age_group}` : ''})`).join('; ')}. `
+        + 'It may be the same player under another spelling – ask me to compare that one.'
+      : '';
+    return { ...out, players, count: 1, answer: `**${p.player_name}** has only ${asc.length ? `one report (${line(asc[0]).slice(2)})` : 'no reports'}, so there is nothing to compare over time.${hint}` };
+  }
+  const header = `${profileHeader(p, reps)}\n\nReports, oldest first:\n${asc.map(line).join('\n')}`;
+  if (opts.onToken) opts.onToken(`${header}\n\n`);
+  if (!asc.some((r) => r.overall_comment || r.x_factor) || !commentsAllowed()) return { ...out, players, count: 1, answer: header };
+  status('Comparing the reports…');
+  const names = await knownNames();
+  const t0 = Date.now();
+  const r = await llmText({
+    system: COMPARE_REPORTS_SYSTEM,
+    content: `Administrator's question: ${message}\n\nFacts table (authoritative for scores and recommendations):\n${asc.map(line).join('\n')}\n\nReports (oldest first):\n${asc.map((x) => reportForLlm(x, names)).join('\n\n')}`,
+    onToken: opts.onToken, maxTokens: 500,
+  }, null);
+  timings.answer_ms = Date.now() - t0;
+  assumptions.push(`Compared this player’s ${asc.length} reports (names redacted) with the AI.`);
+  return { ...out, players, count: 1, sources: asc.map((x) => x.id), sentToLlm: r.ok, answer: r.text ? `${header}\n\n${r.text}` : header };
 }
 
 function profileHeader(p, reps) {
@@ -493,7 +534,8 @@ async function answerData(message, planned, opts, timings) {
       const targets = spec.resolvedPlayerIds ? spec.resolvedPlayerIds.slice(0, 5) : rows.map((r) => r.player_id);
       if (!targets.length) return { ...out, players: [], count: 0, answer: 'No players match.' };
       if (spec.intent === 'compare' && targets.length < 2) {
-        return { ...out, players: rows, answer: 'I need at least two players to compare – which players should I compare?', route: 'clarify' };
+        // one player named: compare that player's reports over time (or explain why that is not possible)
+        return compareOwnReports(targets[0], rows, out, { message, opts, status, timings, assumptions });
       }
       const perPlayer = spec.intent === 'profile' ? 10 : 3;
       const [{ rows: pls }, { rows: reps }] = await Promise.all([

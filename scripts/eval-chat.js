@@ -14,10 +14,10 @@ const text = (s, t, field) => has(s.text, (x) => (!field || x.fields.includes(fi
 const content = (s) => s.tags.length + s.text.length + (s.meaning ? 1 : 0) > 0;
 
 // real names are read from the database when the evaluation runs, so no personal data is stored in this file
-const NAME = { A: '', B: '', SCOUT: '', FIRST: '', A1: '', B1: '', BL: '' };
+const NAME = { A: '', B: '', SCOUT: '', FIRST: '', A1: '', B1: '', BL: '', MOST: '', ONE: '' };
 const { foldText, foldSql } = require('../src/chat/fold');
 const q = (v) => String(v).replace(/'/g, "''");
-const fill = (t) => t.replace(/\{A\}/g, NAME.A).replace(/\{B\}/g, NAME.B).replace(/\{SCOUT\}/g, NAME.SCOUT).replace(/\{FIRST\}/g, NAME.FIRST).replace(/\{A1\}/g, NAME.A1).replace(/\{B1\}/g, NAME.B1).replace(/\{BL\}/g, NAME.BL).replace(/\{SCOUTFLAT\}/g, foldText(NAME.SCOUT).replace(/\b\w/g, (c) => c.toUpperCase()));
+const fill = (t) => t.replace(/\{A\}/g, NAME.A).replace(/\{B\}/g, NAME.B).replace(/\{SCOUT\}/g, NAME.SCOUT).replace(/\{FIRST\}/g, NAME.FIRST).replace(/\{MOST\}/g, NAME.MOST).replace(/\{ONE\}/g, NAME.ONE).replace(/\{A1\}/g, NAME.A1).replace(/\{B1\}/g, NAME.B1).replace(/\{BL\}/g, NAME.BL).replace(/\{SCOUTFLAT\}/g, foldText(NAME.SCOUT).replace(/\b\w/g, (c) => c.toUpperCase()));
 const n = async (sql) => Number((await pool.query(sql)).rows[0].n);
 const SPEED = "EXISTS (SELECT 1 FROM report_tags rt WHERE rt.report_id = r.id AND rt.tag = 'Speed')";
 // players matching a report-level condition, using the same scope the planner chose (latest report or any report)
@@ -122,6 +122,13 @@ const CASES = [
   ['How many reports did {SCOUTFLAT} write?',
     async (r) => r.count === await n(`SELECT count(*) n FROM reports r JOIN scouts s ON s.id = r.scout_id WHERE s.name = '${q(NAME.SCOUT)}'`)],
 
+  // comparing the reports of one player
+  ['Compare the reports of {MOST} over time',
+    (r) => r.intent === 'compare' && r.count === 1 && /Reports, oldest first/.test(r.answer)],
+  ['{ONE} - find all the reports for this player and compare them',
+    (r) => r.intent === 'compare' && /only one report/.test(r.answer)],
+  ['Compare {A} and {B}', (r) => r.intent === 'compare' && r.count === 2],
+
   // ---- follow-up conversations ----
   [['Show the centre-backs', 'only the left-footed ones', 'how many of them are born in 2012?'],
     async (r, s) => r.intent === 'count' && r.count === await n("SELECT count(*) n FROM player_latest WHERE position ILIKE '%centre-back%' AND strong_foot = 'Left' AND age_group = 2012")],
@@ -171,6 +178,8 @@ const pct = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s.lengt
   NAME.A = two[0].name;
   NAME.B = two[1].name;
   NAME.A1 = two[0].name.split(' ')[0];
+  NAME.MOST = (await one('SELECT player_name FROM player_latest ORDER BY report_count DESC, player_name LIMIT 1')).player_name;
+  NAME.ONE = (await one('SELECT player_name FROM player_latest WHERE report_count = 1 ORDER BY player_name LIMIT 1')).player_name;
   const bw = two[1].name.split(' ').filter(Boolean);
   NAME.B1 = bw[0];
   NAME.BL = bw[bw.length - 1];
