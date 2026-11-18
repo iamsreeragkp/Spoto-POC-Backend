@@ -2,7 +2,8 @@ const crypto = require('crypto');
 const chatPool = require('../db/chatPool');
 const { getLlm } = require('./llm');
 const { normalizePlan, SpecError, FIELDS } = require('./spec');
-const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope } = require('./followup');
+const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames } = require('./followup');
+const { foldText, foldSql, containsPattern } = require('./fold');
 const { getMasker, aliasPlayer } = require('./privacy');
 const { getVocabulary, invalidateVocabulary } = require('./vocabulary');
 const { buildQueries } = require('./builder');
@@ -120,6 +121,16 @@ async function plan(message, context, vocab, timings) {
   const cached = planCache.get(key);
   if (cached) return { ...cached, planCached: true };
 
+  // A message that is only a name ("Andre Kronborg") reaches the AI as opaque tokens it cannot interpret: plan it here.
+  const bare = getLlm().name === 'openai' ? (await getMasker()).bareName(message) : null;
+  if (bare) {
+    const wantsReports = context.turns.slice(-2).some((t) => /\breports?\b/i.test(t.question || ''));
+    const result = normalizePlan({ route: 'data', reply: null, spec: { intent: 'list', unit: wantsReports ? 'report' : 'player', filters: bare.map((w) => ({ field: 'player_name', op: 'contains', value: w })),
+      tags: [], text: [], meaning: null, content_logic: 'all', content_scope: 'latest', near: null, players: [], group_by: null, aggregate: null, sort: null, limit: null,
+      assumptions: [wantsReports ? 'Treated your message as a player name and listed that player’s reports.' : 'Treated your message as a player name.'] } }, vocab);
+    return { ...result, planCached: false };
+  }
+
   const t0 = Date.now();
   let raw;
   try {
@@ -130,7 +141,7 @@ async function plan(message, context, vocab, timings) {
     throw new ChatError(502, 'The AI provider could not interpret the question right now. Please try again.');
   }
   timings.llm_ms = Date.now() - t0;
-  let result = defaultRecommendationScope(message, collapseNameFilters(defaultTextScope(message, carryFollowUp(message, context.lastSpec, normalizePlan(raw, vocab)))));
+  let result = defaultRecommendationScope(message, collapseNameFilters(defaultTextScope(message, carryFollowUp(message, context.lastSpec, mergeAdjacentNames(message, normalizePlan(raw, vocab)))), context.lastSpec));
   // a name shared by several people ("Carl") reaches the planner masked as [name]: ask which one is meant
   if (result.route === 'data' && result.spec && (result.spec.players || []).some((p) => /\[name\]/.test(p))) {
     const names = (await getMasker()).ambiguous(message);
@@ -170,23 +181,23 @@ async function resolvePlayers(names) {
   const ids = [], missing = [], ambiguous = [], suggestions = {};
   for (const typed of names) {
     const name = cleanPlayerName(typed) || String(typed).trim();
-    const exact = await chatPool.query('SELECT player_id, player_name FROM player_latest WHERE lower(player_name) = lower($1) LIMIT 2', [name]);
+    const exact = await chatPool.query(`SELECT player_id, player_name FROM player_latest WHERE ${foldSql('player_name')} = $1 LIMIT 2`, [foldText(name)]);
     if (exact.rows.length === 1) { ids.push(exact.rows[0].player_id); continue; }
     let found = (await chatPool.query(
-      'SELECT player_id, player_name FROM player_latest WHERE player_name ILIKE $1 ORDER BY length(player_name), player_name LIMIT 6', [likePattern(name)])).rows;
+      `SELECT player_id, player_name FROM player_latest WHERE ${foldSql('player_name')} LIKE $1 ORDER BY length(player_name), player_name LIMIT 6`, [containsPattern(name)])).rows;
     // words in any order ("Ravn Jonas") or with a typo in one word: every word of 3+ letters must appear in the name
     const words = name.split(/[\s\-]+/).filter((w) => w.length >= 3);
     if (!found.length && words.length > 1) {
       found = (await chatPool.query(
-        `SELECT player_id, player_name FROM player_latest WHERE ${words.map((_, i) => `player_name ILIKE $${i + 1}`).join(' AND ')} ORDER BY length(player_name), player_name LIMIT 6`,
-        words.map(likePattern))).rows;
+        `SELECT player_id, player_name FROM player_latest WHERE ${words.map((_, i) => `${foldSql('player_name')} LIKE $${i + 1}`).join(' AND ')} ORDER BY length(player_name), player_name LIMIT 6`,
+        words.map(containsPattern))).rows;
     }
     if (found.length === 1) ids.push(found[0].player_id);
     else if (!found.length) {
       missing.push(typed);
       if (words.length) { // "did you mean": players sharing any word with what was typed
         const sim = await chatPool.query(
-          `SELECT player_name FROM player_latest WHERE ${words.map((_, i) => `player_name ILIKE $${i + 1}`).join(' OR ')} ORDER BY length(player_name), player_name LIMIT 3`, words.map(likePattern));
+          `SELECT player_name FROM player_latest WHERE ${words.map((_, i) => `${foldSql('player_name')} LIKE $${i + 1}`).join(' OR ')} ORDER BY length(player_name), player_name LIMIT 3`, words.map(containsPattern));
         if (sim.rows.length) suggestions[typed] = sim.rows.map((r) => r.player_name);
       }
     } else ambiguous.push({ name: typed, options: found.map((r) => r.player_name) });

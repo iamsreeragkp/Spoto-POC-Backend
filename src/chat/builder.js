@@ -17,6 +17,9 @@ const REPORT_COLS = `pl.report_id, pl.player_id, pl.player_name AS name, pl.posi
   pl.report_date, pl.scout_name, pl.stage_of_growth, pl.overall_score, pl.overall_potential_score, pl.recommendation, pl.x_factor`;
 
 /** Which column links a content match to the row: the row's report (latest / report unit) or the player (all reports). */
+const { foldText, foldSql, containsPattern } = require('./fold');
+const FOLDED_FIELDS = new Set(['player_name', 'scout_name']);
+
 function keyOf(spec) {
   if (spec.unit === 'report') return { rowKey: 'pl.report_id', matchKey: 'report_id' };
   return spec.content_scope === 'all'
@@ -42,6 +45,8 @@ function buildWhere(spec, near, meaningRes, { exclude } = {}) {
     if (f.op === 'is_null') return parts.push(`${col} IS NULL`);
     if (f.op === 'not_null') return parts.push(`${col} IS NOT NULL`);
     if (def.kind === 'text') {
+      if (FOLDED_FIELDS.has(f.field) && f.op === 'contains') return parts.push(`${foldSql(col)} LIKE ${add(containsPattern(f.value))}`);
+      if (FOLDED_FIELDS.has(f.field) && f.op === 'eq') return parts.push(`${foldSql(col)} = ${add(foldText(f.value))}`);
       if (f.op === 'contains') return parts.push(`${col} ILIKE ${add(`%${f.value}%`)}`);
       if (f.op === 'neq') return parts.push(`(${col} IS NULL OR lower(${col}) <> lower(${add(f.value)}))`);
       if (OP_SQL[f.op]) return parts.push(`${col} ${OP_SQL[f.op]} ${add(f.value)}`); // e.g. report_month >= '2025-01'

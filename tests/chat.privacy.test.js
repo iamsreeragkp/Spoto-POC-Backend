@@ -154,3 +154,22 @@ test("aliasPlayer replaces a report's own player (full name and parts) by the re
   assert.equal(aliasPlayer('He is calm', 'Anna Testsen', 7), 'He is calm');
   assert.equal(masker.unmask(aliasPlayer('Alex plays directly', 'Alex', 2)), 'Alex plays directly');
 });
+
+test('bareName: a message that is only a player name is detected (first name, surname, full name), anything else is not', () => {
+  const m = buildMasker([{ token: '\u27E6P1\u27E7', name: 'Anna Testsen' }, { token: '\u27E6P2\u27E7', name: 'Carl Baker' }, { token: '\u27E6P3\u27E7', name: 'Carl Eklund Jahn' }, { token: '\u27E6S1\u27E7', name: 'Jonas Lindqvist' }]);
+  assert.deepEqual(m.bareName('Carl'), ['Carl']);
+  assert.deepEqual(m.bareName('Anna Testsen'), ['Anna', 'Testsen']);
+  assert.deepEqual(m.bareName('  carl eklund. '), ['carl', 'eklund']);
+  assert.equal(m.bareName('Tell me about Carl'), null);
+  assert.equal(m.bareName('And Carl'), null);
+  assert.equal(m.bareName('Jonas Lindqvist'), null, 'a scout name is not a player search');
+  assert.equal(m.bareName('hello'), null);
+  assert.equal(m.bareName(''), null);
+});
+
+test('names typed without accents or with o-slash replaced are masked too (Jorgen = J\u00f8rgen)', () => {
+  const m = buildMasker([{ token: '\u27E6S1\u27E7', name: 'J\u00f8rgen Lindqvist' }, { token: '\u27E6P1\u27E7', name: 'Andr\u00e9 Marlowe' }]);
+  assert.equal(m.mask('Reports by Jorgen Lindqvist'), 'Reports by \u27E6S1\u27E7');
+  assert.equal(m.mask('about Andre Marlowe'), 'about \u27E6P1\u27E7');
+  assert.equal(m.findLeak(m.mask('Jorgen and Andre')), null);
+});

@@ -16,7 +16,8 @@ const chatPool = require('../db/chatPool');
 
 const IGNORE_PARTS = new Set(['player', 'van', 'der', 'den', 'von', 'the', 'and', 'jr', 'junior']);
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const fold = (s) => s.normalize('NFD').replace(/\p{M}/gu, '');
+const { foldText } = require('./fold');
+const fold = (s) => foldText(s); // accents and ø/æ/å mapped to plain letters (lowercase), same as the name search
 const clean = (s) => String(s || '').normalize('NFC').replace(/\s+/g, ' ').trim();
 const wordRe = (list) => (list.length
   ? new RegExp(`(?<![\\p{L}\\p{N}])(?:${list.sort((a, b) => b.length - a.length).map(escapeRe).join('|')})(?![\\p{L}\\p{N}])`, 'giu')
@@ -83,6 +84,16 @@ function buildMasker(entries) {
     }
     return [...out].slice(0, 8);
   };
+  /** The words of a message that consists only of player-name parts ("Andre Kronborg"), else null. */
+  const bareName = (text) => {
+    const t = String(text || '').trim();
+    if (!t || t.length > 60) return null;
+    const masked = mask(t, { allowParts: true });
+    if (/\u27E6S\d+\u27E7/.test(masked) || !/\u27E6[PN]\d+\u27E7/.test(masked)) return null;
+    if (masked.replace(/\u27E6[PN]\d+\u27E7/g, '').replace(/[\s.,;:!?'"\u201C\u201D\-]+/g, '')) return null;
+    const ws = t.match(/[\p{L}\p{N}]+/gu) || [];
+    return ws.length && ws.length <= 6 ? ws : null;
+  };
   /** first known name still present in text (should always be null after mask/scrub) */
   const findLeak = (text) => { if (!re || text == null) return null; re.lastIndex = 0; const m = re.exec(String(text)); re.lastIndex = 0; return m ? m[0] : null; };
 
@@ -99,7 +110,7 @@ function buildMasker(entries) {
       flush() { out(buf); buf = ''; },
     };
   };
-  return { mask, scrub, unmask, unmaskDeep, unmaskStream, findLeak, ambiguous, size: entries.length };
+  return { mask, scrub, unmask, unmaskDeep, unmaskStream, findLeak, ambiguous, bareName, size: entries.length };
 }
 
 /** Replaces a player's own full name and name parts in free text by that player's alias token (reversible). */

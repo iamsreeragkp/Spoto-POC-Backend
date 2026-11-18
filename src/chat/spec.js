@@ -191,14 +191,30 @@ function normalizeSpec(raw, vocab) {
   // Keyword search. Free text (x-factor, comment) uses full-text search; the tag columns only ever hold vocabulary
   // values, so searching them by words = the vocabulary tags containing those words, matched exactly via report_tags
   // (much faster than text search over tag lists). Both parts stay one OR-condition: { fields, any_of, tag_matches }.
+  // A keyword that is a recorded value, or that value plus a filler word ("left-footed", "golden boy players"), is that value as a filter
+  const FILLER = new Set(['footed', 'foot', 'feet', 'player', 'players']);
+  const matchListed = (term) => {
+    const clean = norm(term);
+    const cw = clean.split(' ').filter(Boolean);
+    for (const [field, list] of Object.entries(LISTED)) {
+      if (!usable(field) || !Array.isArray(list)) continue;
+      for (const v of list) {
+        const vw = norm(v).split(' ').filter(Boolean);
+        if (!vw.length) continue;
+        if (clean.length >= 6 && norm(v) === clean) return [field, String(v)];
+        const rest = cw.filter((w) => !vw.includes(w));
+        if (vw.every((w) => cw.includes(w)) && rest.length && rest.every((w) => FILLER.has(w))) return [field, String(v)];
+      }
+    }
+    return null;
+  };
   const rawText = [];
   for (const t of raw.text || []) {
     const keep = [];
     for (const term of t.any_of || []) {
-      const clean = norm(term);
-      const hit = clean.length >= 6 ? Object.entries(LISTED).find(([field, list]) => usable(field) && Array.isArray(list) && list.some((v) => norm(v) === clean)) : null;
+      const hit = matchListed(term);
       if (hit) {
-        const value = String(hit[1].find((v) => norm(v) === clean));
+        const value = hit[1];
         if (!spec.filters.some((f) => f.field === hit[0] && f.op === 'eq' && f.value === value)) spec.filters.push({ field: hit[0], op: 'eq', value });
         warnings.push(`“${term}” is the recorded ${hit[0].replace(/_/g, ' ')} “${value}”, so it was used as that filter`);
       } else keep.push(term);

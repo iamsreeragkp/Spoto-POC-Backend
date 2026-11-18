@@ -221,15 +221,26 @@ test('normalizeSpec: "born in YYYY" on year_of_birth becomes the age_group cohor
   assert.deepEqual(spec.filters, [{ field: 'age_group', op: 'eq', value: 2012 }]);
 });
 
-test('collapseNameFilters: a new name replaces the old one; "Anna" + "Anna Testsen" is one name', () => {
+test('collapseNameFilters: a new name replaces the previous question\u2019s name; names from the same question stay together', () => {
   const { collapseNameFilters } = require('../src/chat/followup');
-  const plan = (...vals) => ({ route: 'data', spec: { filters: vals.map((value) => ({ field: 'player_name', op: 'contains', value })).concat([{ field: 'position', op: 'contains', value: 'winger' }]), assumptions: [] } });
-  const a = collapseNameFilters(plan('Anna Testsen', 'Carl')).spec.filters;
-  assert.deepEqual(a.map((f) => f.value), ['winger', 'Carl']);
-  const b = collapseNameFilters(plan('Anna', 'Anna Testsen')).spec.filters;
-  assert.deepEqual(b.filter((f) => f.field === 'player_name').map((f) => f.value), ['Anna Testsen']);
+  const nf = (...vals) => vals.map((value) => ({ field: 'player_name', op: 'contains', value }));
+  const plan = (...vals) => ({ route: 'data', spec: { filters: nf(...vals).concat([{ field: 'position', op: 'contains', value: 'winger' }]), assumptions: [] } });
+  const last = { filters: nf('Anna Testsen') };
+  // follow-up "And Carl": the old name was carried over -> only the new one stays
+  assert.deepEqual(collapseNameFilters(plan('Anna Testsen', 'Carl'), last).spec.filters.map((f) => f.value), ['winger', 'Carl']);
+  // "Andre Kronborg": first name + surname both come from this question -> kept (AND)
+  const both = plan('Andre', 'Kronborg');
+  assert.equal(collapseNameFilters(both, last), both);
+  assert.equal(collapseNameFilters(both, null), both, 'no previous plan: untouched');
   const one = plan('Carl');
-  assert.equal(collapseNameFilters(one), one, 'a single name filter is untouched');
+  assert.equal(collapseNameFilters(one, last), one, 'a single name filter is untouched');
+});
+
+test('foldText: accents are removed so "Andre" matches "Andr\u00e9" and "Jorgen" matches "J\u00f8rgen"', () => {
+  const { foldText, containsPattern } = require('../src/chat/fold');
+  assert.equal(foldText('Andr\u00e9 Marshall'), 'andre marshall');
+  assert.equal(foldText('J\u00f8rgen M\u00e6hle \u00c5se'), 'jorgen mahle ase');
+  assert.equal(containsPattern('Andr\u00e9 100%_x'), '%andre 100  x%');
 });
 
 test('defaultRecommendationScope: a recommendation filter looks at any report unless the question says latest/current', () => {
@@ -241,4 +252,25 @@ test('defaultRecommendationScope: a recommendation filter looks at any report un
   assert.equal(defaultRecommendationScope('How many reports say golden boy?', rep), rep, 'report unit untouched');
   const none = { route: 'data', spec: { unit: 'player', filters: [{ field: 'position', op: 'contains', value: 'winger' }] } };
   assert.equal(defaultRecommendationScope('wingers', none), none);
+});
+
+test('mergeAdjacentNames: first name and surname typed together become one name', () => {
+  const { mergeAdjacentNames } = require('../src/chat/followup');
+  const plan = (players) => ({ route: 'data', spec: { intent: 'profile', players } });
+  assert.deepEqual(mergeAdjacentNames('Tell me about Andre Kronborg', plan(['Andre', 'Kronborg'])).spec.players, ['Andre Kronborg']);
+  assert.deepEqual(mergeAdjacentNames('Compare Anna and Carl', plan(['Anna', 'Carl'])).spec.players, ['Anna', 'Carl'], 'two different people stay separate');
+  const one = plan(['Anna Testsen']);
+  assert.equal(mergeAdjacentNames('Tell me about Anna Testsen', one), one);
+});
+
+test('normalizeSpec: keywords like "left-footed" or "golden boy players" become the recorded value as a filter', () => {
+  const v = { ...vocab, recommendations: ['Golden-boy!!!', 'Needs to be watched again!'], stageOfGrowth: [], strongFoot: ['Right', 'Left', 'Two-footed'], positions: ['No. 9', 'Right winger'] };
+  const f = (any_of) => normalizeSpec({ intent: 'list', text: [{ fields: ['any'], any_of }] }, v).spec;
+  assert.deepEqual(f(['Left-footed']).filters, [{ field: 'strong_foot', op: 'eq', value: 'Left' }]);
+  assert.equal(f(['Left-footed']).text.length, 0);
+  assert.deepEqual(f(['right foot']).filters, [{ field: 'strong_foot', op: 'eq', value: 'Right' }]);
+  assert.deepEqual(f(['two footed']).filters, [{ field: 'strong_foot', op: 'eq', value: 'Two-footed' }]);
+  assert.deepEqual(f(['golden boy players']).filters, [{ field: 'recommendation', op: 'eq', value: 'Golden-boy!!!' }]);
+  assert.equal(f(['right winger']).filters.length, 0, 'a position is not a foot');
+  assert.equal(f(['left back runs']).filters.length, 0, 'other words stay a keyword search');
 });
