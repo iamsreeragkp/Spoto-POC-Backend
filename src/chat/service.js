@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const chatPool = require('../db/chatPool');
 const { getLlm } = require('./llm');
 const { normalizePlan, SpecError, FIELDS } = require('./spec');
-const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, toCompareReports, explainToAnalysis, nameFiltersNeedAName } = require('./followup');
+const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, toCompareReports, explainToAnalysis, nameFiltersNeedAName, rankAmongPlayers, addToPreviousSet, focusSetFromContext } = require('./followup');
 const { foldText, foldSql, containsPattern } = require('./fold');
 const { getMasker, aliasPlayer } = require('./privacy');
 const { getVocabulary, invalidateVocabulary } = require('./vocabulary');
@@ -143,7 +143,15 @@ async function plan(message, context, vocab, timings) {
   timings.llm_ms = Date.now() - t0;
   const masker = getLlm().name === 'openai' ? await getMasker() : null;
   const maskFn = masker ? (t) => masker.mask(t, { allowParts: true }) : null; // names are only masked when text goes to the AI provider
-  let result = defaultRecommendationScope(message, explainToAnalysis(message, toCompareReports(message, collapseNameFilters(defaultTextScope(message, carryFollowUp(message, context.lastSpec, nameFiltersNeedAName(message, mergeAdjacentNames(message, normalizePlan(raw, vocab)), context.lastSpec, maskFn))), context.lastSpec))));
+  let result = defaultRecommendationScope(message, explainToAnalysis(message, rankAmongPlayers(message, toCompareReports(message, collapseNameFilters(defaultTextScope(message, carryFollowUp(message, context.lastSpec, focusSetFromContext(message, context, nameFiltersNeedAName(message, mergeAdjacentNames(message, normalizePlan(raw, vocab)), context.lastSpec, maskFn)))), context.lastSpec)))));
+  // "Why not <player>?": add that player to the previous list and rank everyone together
+  const mentioned = masker ? (masker.mask(message, { allowParts: true }).match(/\u27E6P\d+\u27E7/g) || []).map((t) => masker.unmask(t)) : [];
+  const add = addToPreviousSet(message, context, mentioned);
+  if (add) {
+    result = normalizePlan({ route: 'data', reply: null, spec: { intent: add.intent, unit: 'player', filters: [], tags: [], text: [], meaning: null, content_logic: 'all', content_scope: 'latest', near: null,
+      players: add.players, group_by: null, aggregate: null, sort: { field: 'overall_score', direction: 'desc' }, limit: add.players.length,
+      assumptions: [`Added ${mentioned[0]} to the players of the previous answer and ranked all ${add.players.length} together.`] } }, vocab);
+  }
   // a name shared by several people ("Carl") reaches the planner masked as [name]: ask which one is meant
   if (result.route === 'data' && result.spec && (result.spec.players || []).some((p) => /\[name\]/.test(p))) {
     const names = (await getMasker()).ambiguous(message);

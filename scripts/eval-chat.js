@@ -14,10 +14,10 @@ const text = (s, t, field) => has(s.text, (x) => (!field || x.fields.includes(fi
 const content = (s) => s.tags.length + s.text.length + (s.meaning ? 1 : 0) > 0;
 
 // real names are read from the database when the evaluation runs, so no personal data is stored in this file
-const NAME = { A: '', B: '', SCOUT: '', FIRST: '', A1: '', B1: '', BL: '', MOST: '', ONE: '' };
+const NAME = { A: '', B: '', SCOUT: '', FIRST: '', A1: '', B1: '', BL: '', MOST: '', ONE: '', N: '' };
 const { foldText, foldSql } = require('../src/chat/fold');
 const q = (v) => String(v).replace(/'/g, "''");
-const fill = (t) => t.replace(/\{A\}/g, NAME.A).replace(/\{B\}/g, NAME.B).replace(/\{SCOUT\}/g, NAME.SCOUT).replace(/\{FIRST\}/g, NAME.FIRST).replace(/\{MOST\}/g, NAME.MOST).replace(/\{ONE\}/g, NAME.ONE).replace(/\{A1\}/g, NAME.A1).replace(/\{B1\}/g, NAME.B1).replace(/\{BL\}/g, NAME.BL).replace(/\{SCOUTFLAT\}/g, foldText(NAME.SCOUT).replace(/\b\w/g, (c) => c.toUpperCase()));
+const fill = (t) => t.replace(/\{A\}/g, NAME.A).replace(/\{B\}/g, NAME.B).replace(/\{SCOUT\}/g, NAME.SCOUT).replace(/\{FIRST\}/g, NAME.FIRST).replace(/\{N\}/g, NAME.N).replace(/\{MOST\}/g, NAME.MOST).replace(/\{ONE\}/g, NAME.ONE).replace(/\{A1\}/g, NAME.A1).replace(/\{B1\}/g, NAME.B1).replace(/\{BL\}/g, NAME.BL).replace(/\{SCOUTFLAT\}/g, foldText(NAME.SCOUT).replace(/\b\w/g, (c) => c.toUpperCase()));
 const n = async (sql) => Number((await pool.query(sql)).rows[0].n);
 const SPEED = "EXISTS (SELECT 1 FROM report_tags rt WHERE rt.report_id = r.id AND rt.tag = 'Speed')";
 // players matching a report-level condition, using the same scope the planner chose (latest report or any report)
@@ -137,6 +137,20 @@ const CASES = [
         && (!r.sent_to_llm || top.some((nme) => r.answer.includes(nme)));
     }, { comments: false }],
 
+  // the client's conversation: two searches, then "which one of these N" must rank ALL of them; "Why not X?" adds X
+  [['Find me and show all the players named {A1}', 'And {FIRST}', 'Which one of these {N} has higher ranking?'],
+    async (r, s) => {
+      const exp = (await pool.query(`SELECT player_name FROM player_latest WHERE player_name ILIKE '${q(NAME.A1)}%' OR player_name ILIKE '%${q(NAME.FIRST)}%'
+        ORDER BY overall_score DESC NULLS LAST, overall_potential_score DESC NULLS LAST, player_name`)).rows.map((x) => x.player_name);
+      return r.intent === 'list' && r.players.length === exp.length && r.players.map((p) => p.name).join('|') === exp.join('|');
+    }],
+  [['Show me all the players named {FIRST}', 'Which one of these has the highest ranking?', 'Why not {A1}?'],
+    async (r) => {
+      const names = r.players.map((p) => p.name);
+      return names.some((nme) => nme.toLowerCase().startsWith(NAME.A1.toLowerCase())) && names.length >= 2
+        && names[0] === (await pool.query(`SELECT player_name FROM player_latest WHERE player_name = ANY($1) ORDER BY overall_score DESC NULLS LAST, overall_potential_score DESC NULLS LAST, player_name LIMIT 1`, [names])).rows[0].player_name;
+    }],
+
   // ---- follow-up conversations ----
   [['Show the centre-backs', 'only the left-footed ones', 'how many of them are born in 2012?'],
     async (r, s) => r.intent === 'count' && r.count === await n("SELECT count(*) n FROM player_latest WHERE position ILIKE '%centre-back%' AND strong_foot = 'Left' AND age_group = 2012")],
@@ -182,7 +196,7 @@ const pct = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s.lengt
 (async () => {
   const only = arg('only');
   const one = async (sql) => (await pool.query(sql)).rows[0] || {};
-  const two = (await pool.query('SELECT name FROM players ORDER BY id LIMIT 2')).rows;
+  const two = (await pool.query("SELECT name FROM players WHERE name LIKE '% %' ORDER BY id LIMIT 2")).rows; // full names, so a typed name is not an exact match for a one-word player
   NAME.A = two[0].name;
   NAME.B = two[1].name;
   NAME.A1 = two[0].name.split(' ')[0];
@@ -193,6 +207,7 @@ const pct = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s.lengt
   NAME.BL = bw[bw.length - 1];
   NAME.SCOUT = (await one('SELECT s.name FROM scouts s JOIN reports r ON r.scout_id = s.id GROUP BY s.name ORDER BY count(*) DESC LIMIT 1')).name;
   NAME.FIRST = (await one(`SELECT split_part(name, ' ', 1) AS f FROM players GROUP BY 1 HAVING count(*) > 1 ORDER BY 1 LIMIT 1`)).f || 'Alex';
+  NAME.N = String(1 + Number((await one(`SELECT count(*) AS c FROM player_latest WHERE player_name ILIKE '%${NAME.FIRST.replace(/'/g, "''")}%'`)).c));
   const results = [];
   const { rows: [size] } = await pool.query('SELECT (SELECT count(*) FROM reports)::int AS reports, (SELECT count(*) FROM players)::int AS players');
   console.log(`Evaluating ${CASES.length} cases against ${size.reports.toLocaleString()} reports / ${size.players.toLocaleString()} players\n`);

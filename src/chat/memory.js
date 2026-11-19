@@ -11,7 +11,7 @@ const isValidId = (id) => typeof id === 'string' && UUID.test(id);
 async function loadContext(conversationId) {
   if (!isValidId(conversationId)) return { turns: [], lastSpec: null };
   const { rows } = await pool.query(
-    `SELECT question, route, intent, spec, result_count AS count, player_names FROM chat_messages
+    `SELECT question, route, intent, spec, result_count AS count, player_names, CASE WHEN route = 'clarify' THEN left(answer, 240) END AS answer FROM chat_messages
      WHERE conversation_id = $1 ORDER BY id DESC LIMIT $2`, [conversationId, TURNS]);
   const turns = rows.reverse();
   const lastData = [...turns].reverse().find((t) => t.route === 'data' && t.spec);

@@ -325,3 +325,64 @@ test('nameFiltersNeedAName: a name filter without any name in the question becom
   const p = plan('x');
   assert.equal(nameFiltersNeedAName('anything', p, null, null), p, 'no masker (mock provider): untouched');
 });
+
+test('carryFollowUp: "these 5" with five explicit players keeps exactly those players (no earlier name filter added back)', () => {
+  const { carryFollowUp } = require('../src/chat/followup');
+  const last = { intent: 'list', filters: [{ field: 'player_name', op: 'contains', value: 'Carl' }], tags: [], text: [], meaning: null };
+  const five = ['A One', 'Carl A', 'Carl B', 'Carl C', 'Carl D'];
+  const plan = { route: 'data', spec: { intent: 'comment_analysis', filters: [], tags: [], text: [], meaning: null, players: five, assumptions: [] } };
+  assert.equal(carryFollowUp('Which one of these 5 has higher ranking?', last, plan), plan);
+  // without a matching count the old behaviour (reuse the previous result set) stays
+  const out = carryFollowUp('Which one of these has higher ranking?', last, { route: 'data', spec: { ...plan.spec, players: ['Carl A', 'Carl B'] } });
+  assert.deepEqual(out.spec.players, []);
+  assert.equal(out.spec.filters.length, 1);
+});
+
+test('rankAmongPlayers: "which of these N is better" ranks exactly those players by overall score', () => {
+  const { rankAmongPlayers } = require('../src/chat/followup');
+  const mk = (intent, extra = {}) => ({ route: 'data', spec: { intent, unit: 'player', players: ['A', 'B', 'C'], filters: [{ field: 'player_name', op: 'contains', value: 'Carl' }], sort: null, assumptions: [], ...extra } });
+  const a = rankAmongPlayers('Which one of these 3 has higher ranking?', mk('comment_analysis')).spec;
+  assert.equal(a.intent, 'list');
+  assert.deepEqual(a.sort, { field: 'overall_score', direction: 'desc' });
+  assert.equal(a.limit, 3);
+  assert.equal(a.filters.length, 0);
+  assert.equal(rankAmongPlayers('Which of these 3 is best, and explain why', mk('list')).spec.intent, 'comment_analysis');
+  assert.deepEqual(rankAmongPlayers('Who is the most promising of these?', mk('list', { sort: { field: 'overall_potential_score', direction: 'desc' } })).spec.sort, { field: 'overall_potential_score', direction: 'desc' });
+  const untouched = mk('list');
+  assert.equal(rankAmongPlayers('Show these three', untouched), untouched);
+  const single = { route: 'data', spec: { intent: 'list', players: ['A'], filters: [] } };
+  assert.equal(rankAmongPlayers('which is better', single), single);
+});
+
+test('addToPreviousSet: "Why not X?" adds X to the previous answer\u2019s players, unless X is already in it', () => {
+  const { addToPreviousSet } = require('../src/chat/followup');
+  const ctx = { turns: [{ route: 'data', intent: 'list', player_names: ['Carl A', 'Carl B'] }, { route: 'clarify', player_names: null }] };
+  assert.deepEqual(addToPreviousSet('Why not Anna?', ctx, ['Anna Testsen']), { players: ['Carl A', 'Carl B', 'Anna Testsen'], intent: 'list' });
+  assert.equal(addToPreviousSet('Why not Carl A?', ctx, ['Carl A']), null);
+  assert.equal(addToPreviousSet('Tell me about Anna', ctx, ['Anna Testsen']), null, 'needs an "add" wording');
+  assert.equal(addToPreviousSet('Why not Anna?', { turns: [] }, ['Anna Testsen']), null, 'nothing to add to');
+  assert.equal(addToPreviousSet('What about Anna and Carl?', ctx, ['Anna Testsen', 'Carl A']), null, 'exactly one player');
+});
+
+test('planner context includes what the assistant asked back after a clarify turn', () => {
+  const p = userPrompt('yes, he is better', { turns: [{ question: 'Why not X?', route: 'clarify', intent: null, count: null, player_names: null, answer: 'Are you asking why X was not included?' }], lastSpec: null });
+  assert.match(p, /the assistant asked back: "Are you asking why X was not included\?"/);
+});
+
+test('focusSetFromContext: "these 5" = the players of the recent answers together, whatever the planner listed', () => {
+  const { focusSetFromContext } = require('../src/chat/followup');
+  const ctx = { turns: [{ route: 'data', player_names: ['Anna T'] }, { route: 'data', player_names: ['Carl A', 'Carl B', 'Carl C', 'Carl D'] }, { route: 'clarify', player_names: null }] };
+  const plan = (players, filters = []) => ({ route: 'data', spec: { intent: 'list', players, filters, assumptions: [] } });
+  // planner left one out and kept a name filter
+  const a = focusSetFromContext('Which one of these 5 has higher ranking?', ctx, plan(['Carl A', 'Carl B', 'Carl C', 'Carl D'], [{ field: 'player_name', op: 'contains', value: 'Carl' }])).spec;
+  assert.deepEqual(a.players, ['Anna T', 'Carl A', 'Carl B', 'Carl C', 'Carl D']);
+  assert.equal(a.filters.length, 0);
+  // already right: untouched
+  const right = plan(['carl a', 'Anna T', 'Carl B', 'Carl C', 'Carl D']);
+  assert.equal(focusSetFromContext('which of these 5 is best', ctx, right), right);
+  // the count does not match the distinct players shown: untouched
+  const other = plan(['Carl A']);
+  assert.equal(focusSetFromContext('which of these 3 is best', ctx, other), other);
+  const cnt = { route: 'data', spec: { intent: 'count', players: [], filters: [] } };
+  assert.equal(focusSetFromContext('how many of these 5 are left-footed', ctx, cnt), cnt, 'counts are not about named players');
+});

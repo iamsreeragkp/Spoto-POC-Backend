@@ -7,6 +7,10 @@ const REFERS_BACK = /\b(?:of|among|from|out of|within|in)\s+(?:them|those|these)
 function carryFollowUp(message, lastSpec, result) {
   if (!lastSpec || !result || result.route !== 'data' || !result.spec) return result;
   if (!REFERS_BACK.test(message)) return result;
+  // "which one of these 5 ...": the planner listed exactly as many players as the question counts (here the players of two earlier
+  // searches together), so that explicit set is the answer: nothing from the previous question is added back or dropped
+  const nums = [...String(message).matchAll(/\b(\d+)\b/g)].map((m) => Number(m[1]));
+  if ((result.spec.players || []).length >= 2 && nums.includes(result.spec.players.length)) return result;
   if (['profile', 'compare'].includes(lastSpec.intent)) return result; // those are about named players, not a result set
   const next = result.spec;
   const hadContent = (lastSpec.tags || []).length || (lastSpec.text || []).length || lastSpec.meaning;
@@ -130,4 +134,49 @@ function nameFiltersNeedAName(message, result, lastSpec, maskFn) {
     assumptions: [...(s.assumptions || []), `\u201C${phrase}\u201D is not a player name, so it was searched for in the scouts\u2019 text.`].slice(0, 8) } };
 }
 
-module.exports = { nameFiltersNeedAName, explainToAnalysis, toCompareReports, carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, REFERS_BACK };
+// "which one of these 5 has the higher ranking?": a question about who is best/higher among several named players is a ranking of
+// exactly those players (overall score, potential breaks ties), with an explanation only if one is asked for.
+const RANK_WORDS = /\b(?:which|who)\b[^?]*\b(?:higher|highest|better|best|top|ranks?|ranked|ranking|stronger|strongest|more promising|most promising)\b/i;
+function rankAmongPlayers(message, result) {
+  const s = result && result.route === 'data' && result.spec;
+  if (!s || (s.players || []).length < 2 || !['compare', 'comment_analysis', 'list'].includes(s.intent) || !RANK_WORDS.test(message)) return result;
+  const sortable = s.sort && ['overall_score', 'overall_potential_score'].includes(s.sort.field);
+  return { ...result, spec: { ...s, intent: EXPLAIN_WORDS.test(message) ? 'comment_analysis' : 'list', unit: 'player',
+    filters: (s.filters || []).filter((f) => f.field !== 'player_name'), sort: sortable ? s.sort : { field: 'overall_score', direction: 'desc' },
+    limit: Math.min(s.players.length, 8),
+    assumptions: [...(s.assumptions || []), 'Ranked the named players by overall score (potential breaks ties).'].slice(0, 8) } };
+}
+
+// "Why not Mikael?" / "what about Mikael?" / "include Mikael" after a list or ranking: that player is added to the players of the
+// previous answer and everyone is ranked together. Returns { players, intent } or null.
+const ADD_WORDS = /\b(?:why not|what about|how about|include|add|also include|and also)\b/i;
+function addToPreviousSet(message, context, mentioned) {
+  if (!ADD_WORDS.test(message) || !Array.isArray(mentioned) || mentioned.length !== 1) return null;
+  const last = [...((context && context.turns) || [])].reverse().find((t) => t.route === 'data' && t.player_names && t.player_names.length);
+  if (!last) return null;
+  const prev = last.player_names.slice(0, 4);
+  if (last.player_names.some((n) => String(n).toLowerCase() === String(mentioned[0]).toLowerCase())) return null; // already in it
+  return { players: [...prev, mentioned[0]], intent: last.intent === 'comment_analysis' ? 'comment_analysis' : 'list' };
+}
+
+// "Which one of these 5 ...": when the question counts N players and N is exactly the number of distinct players shown in the recent
+// turns together (two searches: 1 + 4), those players are the set, whatever the planner listed (it sometimes leaves one out).
+const THESE_N = /\b(?:these|those|all|the)\s+(\d+)\b/i;
+function focusSetFromContext(message, context, result) {
+  const s = result && result.route === 'data' && result.spec;
+  const m = THESE_N.exec(String(message));
+  if (!s || !m || ['count', 'group_count', 'aggregate', 'profile'].includes(s.intent)) return result;
+  const n = Number(m[1]);
+  const seen = [];
+  for (const t of (context && context.turns) || []) {
+    if (t.route !== 'data') continue;
+    for (const name of t.player_names || []) if (!seen.some((x) => x.toLowerCase() === String(name).toLowerCase())) seen.push(name);
+  }
+  if (n < 2 || n > 8 || seen.length !== n) return result;
+  const same = (s.players || []).length === n && seen.every((x) => s.players.some((y) => y.toLowerCase() === x.toLowerCase()));
+  if (same) return result;
+  return { ...result, spec: { ...s, players: seen, filters: (s.filters || []).filter((f) => f.field !== 'player_name'),
+    assumptions: [...(s.assumptions || []), `Used the ${n} players shown in your recent questions.`].slice(0, 8) } };
+}
+
+module.exports = { focusSetFromContext, rankAmongPlayers, addToPreviousSet, nameFiltersNeedAName, explainToAnalysis, toCompareReports, carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, REFERS_BACK };
