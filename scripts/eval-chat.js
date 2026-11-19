@@ -14,10 +14,10 @@ const text = (s, t, field) => has(s.text, (x) => (!field || x.fields.includes(fi
 const content = (s) => s.tags.length + s.text.length + (s.meaning ? 1 : 0) > 0;
 
 // real names are read from the database when the evaluation runs, so no personal data is stored in this file
-const NAME = { A: '', B: '', SCOUT: '', FIRST: '', A1: '', B1: '', BL: '', MOST: '', ONE: '', N: '' };
+const NAME = { A: '', B: '', SCOUT: '', FIRST: '', A1: '', B1: '', BL: '', MOST: '', ONE: '', N: '', BT: '' };
 const { foldText, foldSql } = require('../src/chat/fold');
 const q = (v) => String(v).replace(/'/g, "''");
-const fill = (t) => t.replace(/\{A\}/g, NAME.A).replace(/\{B\}/g, NAME.B).replace(/\{SCOUT\}/g, NAME.SCOUT).replace(/\{FIRST\}/g, NAME.FIRST).replace(/\{N\}/g, NAME.N).replace(/\{MOST\}/g, NAME.MOST).replace(/\{ONE\}/g, NAME.ONE).replace(/\{A1\}/g, NAME.A1).replace(/\{B1\}/g, NAME.B1).replace(/\{BL\}/g, NAME.BL).replace(/\{SCOUTFLAT\}/g, foldText(NAME.SCOUT).replace(/\b\w/g, (c) => c.toUpperCase()));
+const fill = (t) => t.replace(/\{A\}/g, NAME.A).replace(/\{B\}/g, NAME.B).replace(/\{SCOUT\}/g, NAME.SCOUT).replace(/\{FIRST\}/g, NAME.FIRST).replace(/\{BT\}/g, NAME.BT).replace(/\{N\}/g, NAME.N).replace(/\{MOST\}/g, NAME.MOST).replace(/\{ONE\}/g, NAME.ONE).replace(/\{A1\}/g, NAME.A1).replace(/\{B1\}/g, NAME.B1).replace(/\{BL\}/g, NAME.BL).replace(/\{SCOUTFLAT\}/g, foldText(NAME.SCOUT).replace(/\b\w/g, (c) => c.toUpperCase()));
 const n = async (sql) => Number((await pool.query(sql)).rows[0].n);
 const SPEED = "EXISTS (SELECT 1 FROM report_tags rt WHERE rt.report_id = r.id AND rt.tag = 'Speed')";
 // players matching a report-level condition, using the same scope the planner chose (latest report or any report)
@@ -151,6 +151,26 @@ const CASES = [
         && names[0] === (await pool.query(`SELECT player_name FROM player_latest WHERE player_name = ANY($1) ORDER BY overall_score DESC NULLS LAST, overall_potential_score DESC NULLS LAST, player_name LIMIT 1`, [names])).rows[0].player_name;
     }],
 
+  // "who were the scouts who found these players?" after a golden boy search: reports of those players counted by scout (+ who gave it)
+  [['Show me all the golden boys players', 'Who were the scouts who found these players?'],
+    async (r) => {
+      const exp = await n("SELECT count(*) n FROM reports WHERE player_id IN (SELECT DISTINCT player_id FROM reports WHERE recommendation ILIKE 'golden%')");
+      return r.intent === 'group_count' && r.count === exp && has(r.notes, (x) => /was written by/.test(x));
+    }],
+
+  // the client's comments: "show all ... and then rank the best 3", a surname alone, and a typo that must be answered with "did you mean"
+  ['Show me all the strikers assessed, and then rank the best 3',
+    async (r) => {
+      const all = (await pool.query("SELECT player_name FROM player_latest WHERE position = 'No. 9' ORDER BY overall_score DESC NULLS LAST, overall_potential_score DESC NULLS LAST, player_name")).rows.map((x) => x.player_name);
+      return r.intent === 'list' && r.players.length === all.length && r.players.slice(0, 3).map((p) => p.name).join('|') === all.slice(0, 3).join('|') && /The best 3/.test(r.answer);
+    }],
+  ['Show me all the reports for {BL}',
+    async (r) => r.count === await n(`SELECT count(*) n FROM reports r JOIN players p ON p.id = r.player_id WHERE ${foldSql('p.name')} LIKE '%${q(foldText(NAME.BL))}%'`)],
+  ['Show me all the reports for {BT}',
+    (r) => r.route === 'clarify' && foldText(r.answer).includes(foldText(NAME.BL)) && /did you mean/i.test(r.answer)],
+  ['Show me all the reports for {B1} {BT}',
+    (r) => r.route === 'clarify' && foldText(r.answer).includes(foldText(NAME.BL)) && /did you mean/i.test(r.answer)],
+
   // ---- follow-up conversations ----
   [['Show the centre-backs', 'only the left-footed ones', 'how many of them are born in 2012?'],
     async (r, s) => r.intent === 'count' && r.count === await n("SELECT count(*) n FROM player_latest WHERE position ILIKE '%centre-back%' AND strong_foot = 'Left' AND age_group = 2012")],
@@ -196,7 +216,7 @@ const pct = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s.lengt
 (async () => {
   const only = arg('only');
   const one = async (sql) => (await pool.query(sql)).rows[0] || {};
-  const two = (await pool.query("SELECT name FROM players WHERE name LIKE '% %' ORDER BY id LIMIT 2")).rows; // full names, so a typed name is not an exact match for a one-word player
+  const two = (await pool.query("SELECT name FROM players WHERE name ~ ' [^ ]{5,}$' ORDER BY id LIMIT 2")).rows; // full names with a surname of 5+ letters, so a typed name is not an exact match for a one-word player and a typo in the surname makes sense
   NAME.A = two[0].name;
   NAME.B = two[1].name;
   NAME.A1 = two[0].name.split(' ')[0];
@@ -205,6 +225,9 @@ const pct = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s.lengt
   const bw = two[1].name.split(' ').filter(Boolean);
   NAME.B1 = bw[0];
   NAME.BL = bw[bw.length - 1];
+  // the surname with its 3rd and 4th letters swapped = a typo
+  const sw = NAME.BL.slice(0, 2) + NAME.BL.charAt(3) + NAME.BL.charAt(2) + NAME.BL.slice(4);
+  NAME.BT = sw.toLowerCase() === NAME.BL.toLowerCase() ? NAME.BL.slice(0, -1) : sw;
   NAME.SCOUT = (await one('SELECT s.name FROM scouts s JOIN reports r ON r.scout_id = s.id GROUP BY s.name ORDER BY count(*) DESC LIMIT 1')).name;
   NAME.FIRST = (await one(`SELECT split_part(name, ' ', 1) AS f FROM players GROUP BY 1 HAVING count(*) > 1 ORDER BY 1 LIMIT 1`)).f || 'Alex';
   NAME.N = String(1 + Number((await one(`SELECT count(*) AS c FROM player_latest WHERE player_name ILIKE '%${NAME.FIRST.replace(/'/g, "''")}%'`)).c));

@@ -22,4 +22,19 @@ const foldSql = (col) => `translate(lower(${col}), '${FROM}', '${TO}')`;
 /** LIKE pattern for "contains" (wildcards in the typed text are neutralised) */
 const containsPattern = (s) => `%${foldText(s).replace(/[%_\\]/g, ' ').trim()}%`;
 
-module.exports = { foldText, foldSql, containsPattern };
+/** Edit distance where a swap of two neighbouring letters counts as ONE mistake ("Krnoborg" -> "Kronborg" = 1). */
+function editDistance(a, b) {
+  const m = a.length, n = b.length;
+  const d = Array.from({ length: m + 1 }, (_, i) => [i, ...new Array(n).fill(0)]);
+  for (let j = 1; j <= n; j++) d[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+    }
+  }
+  return d[m][n];
+}
+
+module.exports = { foldText, foldSql, containsPattern, editDistance };

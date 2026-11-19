@@ -2,8 +2,8 @@ const crypto = require('crypto');
 const chatPool = require('../db/chatPool');
 const { getLlm } = require('./llm');
 const { normalizePlan, SpecError, FIELDS } = require('./spec');
-const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, toCompareReports, explainToAnalysis, nameFiltersNeedAName, rankAmongPlayers, addToPreviousSet, focusSetFromContext } = require('./followup');
-const { foldText, foldSql, containsPattern } = require('./fold');
+const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, toCompareReports, explainToAnalysis, nameFiltersNeedAName, rankAmongPlayers, addToPreviousSet, focusSetFromContext, scoutsOfPreviousPlayers, ensureFootFilter, showAllThenRank } = require('./followup');
+const { foldText, foldSql, containsPattern, editDistance } = require('./fold');
 const { getMasker, aliasPlayer } = require('./privacy');
 const { getVocabulary, invalidateVocabulary } = require('./vocabulary');
 const { buildQueries } = require('./builder');
@@ -143,7 +143,8 @@ async function plan(message, context, vocab, timings) {
   timings.llm_ms = Date.now() - t0;
   const masker = getLlm().name === 'openai' ? await getMasker() : null;
   const maskFn = masker ? (t) => masker.mask(t, { allowParts: true }) : null; // names are only masked when text goes to the AI provider
-  let result = defaultRecommendationScope(message, explainToAnalysis(message, rankAmongPlayers(message, toCompareReports(message, collapseNameFilters(defaultTextScope(message, carryFollowUp(message, context.lastSpec, focusSetFromContext(message, context, nameFiltersNeedAName(message, mergeAdjacentNames(message, normalizePlan(raw, vocab)), context.lastSpec, maskFn)))), context.lastSpec)))));
+  let result = defaultRecommendationScope(message, explainToAnalysis(message, rankAmongPlayers(message, toCompareReports(message, collapseNameFilters(defaultTextScope(message, carryFollowUp(message, context.lastSpec, focusSetFromContext(message, context, nameFiltersNeedAName(message, mergeAdjacentNames(message, normalizePlan(raw, vocab)), context.lastSpec, maskFn, vocab)))), context.lastSpec)))));
+  result = showAllThenRank(message, ensureFootFilter(message, result, vocab));
   // "Why not <player>?": add that player to the previous list and rank everyone together
   const mentioned = masker ? (masker.mask(message, { allowParts: true }).match(/\u27E6P\d+\u27E7/g) || []).map((t) => masker.unmask(t)) : [];
   const add = addToPreviousSet(message, context, mentioned);
@@ -151,6 +152,14 @@ async function plan(message, context, vocab, timings) {
     result = normalizePlan({ route: 'data', reply: null, spec: { intent: add.intent, unit: 'player', filters: [], tags: [], text: [], meaning: null, content_logic: 'all', content_scope: 'latest', near: null,
       players: add.players, group_by: null, aggregate: null, sort: { field: 'overall_score', direction: 'desc' }, limit: add.players.length,
       assumptions: [`Added ${mentioned[0]} to the players of the previous answer and ranked all ${add.players.length} together.`] } }, vocab);
+  }
+  // "Who were the scouts who found these players?": count the reports of the previous answer's players by scout
+  const sc = scoutsOfPreviousPlayers(message, context);
+  if (sc) {
+    result = normalizePlan({ route: 'data', reply: null, spec: { intent: 'group_count', unit: 'report', filters: [], tags: [], text: [], meaning: null, content_logic: 'all', content_scope: 'latest', near: null,
+      players: sc.players, group_by: 'scout_name', aggregate: null, sort: null, limit: null,
+      assumptions: ['Counted the reports on the players of your previous answer by scout.'] } }, vocab);
+    if (sc.recommendation && result.spec) result.spec.recommendation_note = sc.recommendation;
   }
   // a name shared by several people ("Carl") reaches the planner masked as [name]: ask which one is meant
   if (result.route === 'data' && result.spec && (result.spec.players || []).some((p) => /\[name\]/.test(p))) {
@@ -187,6 +196,114 @@ async function execute(q) {
 const cleanPlayerName = (name) => String(name).replace(/[\u201C\u201D\u201E"'`]/g, ' ').replace(/^\s*player\s+(?!\d)/i, '').replace(/[.,;:!?]+\s*$/, '').replace(/\s+/g, ' ').trim();
 const likePattern = (s) => `%${s.replace(/[%_\\]/g, ' ').trim()}%`;
 
+/** A name typed into the wrong field ("Kronborg" as a town or club) is a player name when no town/club has that value. */
+async function fixMisfiledNames(spec) {
+  const FIELD_SQL = { location: ['players', 'location'], team_name: ['teams', 'name'], scout_name: ['scouts', 'name'] };
+  for (const f of spec.filters || []) {
+    const src = FIELD_SQL[f.field];
+    if (!src || !['eq', 'contains'].includes(f.op) || foldText(f.value).length < 3) continue;
+    const own = await chatPool.query(`SELECT 1 FROM ${src[0]} WHERE ${foldSql(src[1])} LIKE $1 LIMIT 1`, [containsPattern(f.value)]);
+    if (own.rowCount) continue;
+    const asName = await chatPool.query(`SELECT 1 FROM players WHERE ${foldSql('name')} LIKE $1 LIMIT 1`, [containsPattern(f.value)]);
+    if (asName.rowCount) { f.field = 'player_name'; f.op = 'contains'; spec.assumptions = [...(spec.assumptions || []), `“${f.value}” is a player name, not a ${f.field === 'location' ? 'town' : 'club'}.`].slice(0, 8); }
+  }
+}
+
+const NAME_SOURCES = `SELECT name AS v, 'player' AS kind, ${foldSql('name')} AS fv FROM players
+    UNION ALL SELECT name, 'scout', ${foldSql('name')} FROM scouts
+    UNION ALL SELECT name, 'club', ${foldSql('name')} FROM teams
+    UNION ALL SELECT DISTINCT location, 'town', ${foldSql('location')} FROM players WHERE location IS NOT NULL`;
+const KIND_ORDER = { player: 0, scout: 1, town: 2, club: 3 };
+
+/** Names/towns/clubs spelled like the typed word: one or two wrong or swapped letters, or similar by trigram. [{ v, kind }] */
+async function nearMatches(term, { playersOnly = false } = {}) {
+  const ft = foldText(term);
+  if (ft.length < 3) return [];
+  const src = playersOnly ? `SELECT name AS v, 'player' AS kind, ${foldSql('name')} AS fv FROM players` : NAME_SOURCES;
+  const { rows } = await chatPool.query(`SELECT v, kind, fv, word_similarity($1, fv) AS sim FROM (${src}) x`, [ft]);
+  const maxD = ft.length >= 6 ? 2 : 1;
+  const hits = [];
+  for (const r of rows) {
+    const d = Math.min(...r.fv.split(/[\s-]+/).filter(Boolean).map((w) => editDistance(ft, w)));
+    if (d <= maxD || Number(r.sim) >= 0.5) hits.push({ v: r.v, kind: r.kind, score: d <= maxD ? d : 3 - Number(r.sim) });
+  }
+  return hits.sort((a, b) => a.score - b.score || KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.v.localeCompare(b.v)).slice(0, 5);
+}
+
+// words of all names, scouts, clubs and towns (accent-folded) -> the entries that contain them; refreshed every 5 minutes
+let wordIndex = { at: 0, map: null };
+async function nameWordIndex() {
+  if (wordIndex.map && Date.now() - wordIndex.at < 5 * 60 * 1000) return wordIndex.map;
+  const { rows } = await chatPool.query(`SELECT v, kind, fv FROM (${NAME_SOURCES}) x`);
+  const map = new Map();
+  for (const r of rows) for (const w of r.fv.split(/[\s-]+/).filter((x) => x.length >= 3)) {
+    if (!map.has(w)) map.set(w, []);
+    map.get(w).push({ v: r.v, kind: r.kind });
+  }
+  wordIndex = { at: Date.now(), map };
+  return map;
+}
+
+/**
+ * "Show me all the reports for Krnoborg": a capitalised word that is no name, town, club or scout but is one slip (a wrong or swapped letter)
+ * away from one is a typo. Returns the "Did you mean ...?" question, or null. Words that are valid, or that start a name ("Kron"), pass.
+ */
+// ordinary football / data words that must never be taken for a misspelled name ("Center Back" is not "Bach")
+const COMMON_WORDS = new Set(('center centre back left right winger striker midfielder midfield goalkeeper keeper defender defence defense forward attacker attacking ' +
+  'position positions player players father mother height potential overall score scores golden needs scout scouts recommends recommendation recommendations ' +
+  'watched again developed development stage growth report reports speed natural leader danish denmark highest lowest average ranking compare strong weak ' +
+  'physical mental technical tactical deadball team teams latest current mentioned assessed under over than best top worst foot footed centre-back').split(' '));
+const vocabWords = new WeakMap();
+function knownVocabWords(vocab) {
+  if (!vocab) return COMMON_WORDS;
+  if (vocabWords.has(vocab)) return vocabWords.get(vocab);
+  const all = [...(vocab.positions || []), ...(vocab.secondaryPositions || []), ...(vocab.stageOfGrowth || []), ...(vocab.strongFoot || []), ...(vocab.recommendations || []),
+    ...Object.values(vocab.tags || {}).flat().map((t) => t.tag)];
+  const set = new Set(COMMON_WORDS);
+  for (const phrase of all) for (const w of foldText(phrase).split(/[^a-z0-9]+/).filter(Boolean)) set.add(w);
+  vocabWords.set(vocab, set);
+  return set;
+}
+
+async function typoInMessage(message, vocab) {
+  const tokens = String(message).match(/[\p{L}][\p{L}'-]*/gu) || [];
+  if (!tokens.length) return null;
+  const map = await nameWordIndex();
+  const known = knownVocabWords(vocab);
+  const keys = [...map.keys()];
+  const parts = [];
+  for (let i = 0; i < tokens.length && parts.length < 2; i++) {
+    const w = tokens[i];
+    if (w.length < 5 || w[0] !== w[0].toUpperCase() || w === w.toUpperCase()) continue; // capitalised word of 5+ letters, not an acronym
+    if (i === 0 && tokens.length > 1) continue; // sentence start: "Show", "Compare" ...
+    const fw = foldText(w);
+    if (known.has(fw) || map.has(fw) || keys.some((k) => k.startsWith(fw))) continue; // a data/football word, a real name, or the start of one
+    const maxD = fw.length >= 8 ? 2 : 1;
+    const hits = [];
+    for (const k of keys) if (Math.abs(k.length - fw.length) <= maxD && editDistance(fw, k) <= maxD) hits.push(...map.get(k));
+    const seen = new Set();
+    const uniq = hits.filter((h) => (seen.has(h.v) ? false : seen.add(h.v) && true)).sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.v.localeCompare(b.v)).slice(0, 5);
+    if (uniq.length) parts.push(`I couldn't find “${w}”. Did you mean ${uniq.map((h) => `${h.v}${h.kind === 'player' ? '' : ` (${h.kind})`}`).join(', ')}?`);
+  }
+  return parts.length ? parts.join(' ') : null;
+}
+
+/** Zero results and a typed name/town/club that matches nothing: offer the closest spellings ("Did you mean ...?"). */
+async function typoSuggestions(spec) {
+  const NAME_FIELDS = ['player_name', 'scout_name', 'team_name', 'location'];
+  const terms = [...new Set((spec.filters || []).filter((f) => NAME_FIELDS.includes(f.field) && ['eq', 'contains'].includes(f.op)).map((f) => String(f.value)))].filter((t) => foldText(t).length >= 3);
+  // a two-word name with one typo ('Andre Kronbrog'): look at every word on its own
+  const words = [...new Set(terms.flatMap((t) => t.split(/[\s-]+/)).filter((w) => foldText(w).length >= 3))];
+  const parts = [];
+  for (const term of words.slice(0, 3)) {
+    const valid = await chatPool.query(`SELECT 1 FROM (${NAME_SOURCES}) x WHERE fv LIKE $1 LIMIT 1`, [containsPattern(term)]);
+    if (valid.rowCount) continue; // the value exists: the empty result has another cause
+    const near = await nearMatches(term);
+    if (near.length) parts.push(`I couldn't find “${term}”. Did you mean ${near.map((r) => `${r.v}${r.kind === 'player' ? '' : ` (${r.kind})`}`).join(', ')}?`);
+  }
+  return parts.length ? parts.join(' ') : null;
+}
+
 async function resolvePlayers(names) {
   const ids = [], missing = [], ambiguous = [], suggestions = {};
   for (const typed of names) {
@@ -209,6 +326,10 @@ async function resolvePlayers(names) {
         const sim = await chatPool.query(
           `SELECT player_name FROM player_latest WHERE ${words.map((_, i) => `${foldSql('player_name')} LIKE $${i + 1}`).join(' OR ')} ORDER BY length(player_name), player_name LIMIT 3`, words.map(containsPattern));
         if (sim.rows.length) suggestions[typed] = sim.rows.map((r) => r.player_name);
+      }
+      if (!suggestions[typed]) { // typo: the closest spellings
+        const near = await nearMatches(name, { playersOnly: true });
+        if (near.length) suggestions[typed] = near.map((r) => r.v);
       }
     } else ambiguous.push({ name: typed, options: found.map((r) => r.player_name) });
   }
@@ -309,11 +430,16 @@ async function ask(message, opts = {}) {
     getVocabulary(),
   ]);
   let planned;
-  try {
-    planned = await plan(message, context, vocab, timings);
-  } catch (e) {
-    if (e instanceof SpecError) throw new ChatError(422, e.message);
-    throw e;
+  const typo = await typoInMessage(message, vocab).catch((e) => { console.error('typo check failed:', e.message); return null; });
+  if (typo) {
+    planned = { route: 'clarify', reply: typo, spec: null, planCached: false };
+  } else {
+    try {
+      planned = await plan(message, context, vocab, timings);
+    } catch (e) {
+      if (e instanceof SpecError) throw new ChatError(422, e.message);
+      throw e;
+    }
   }
 
   let result;
@@ -386,6 +512,8 @@ async function answerData(message, planned, opts, timings) {
     assumptions.push(`Player locations are municipalities, measured from their centre; driving time is ${near.source === 'estimate' ? 'estimated from straight-line distance' : 'calculated by road routing'}.`);
   }
 
+  await fixMisfiledNames(spec);
+
   // ---- named players ----
   if (spec.players.length) {
     const r = await resolvePlayers(spec.players);
@@ -450,10 +578,20 @@ async function answerData(message, planned, opts, timings) {
     resultCache.set(rkey, exec);
   }
   timings.db_ms = Date.now() - t1;
+  if (Number(exec.count) === 0 && ['list', 'count', 'group_count', 'aggregate', 'comment_analysis'].includes(spec.intent)) {
+    const sug = await typoSuggestions(spec);
+    if (sug) return { ...base, route: 'clarify', answer: sug, count: 0 };
+  }
 
   const minutesByLoc = near ? new Map(near.locations.map((l) => [l.location, l.minutes])) : null;
   let rows = (exec.rows || []).map((p) => (minutesByLoc ? { ...p, drive_minutes: minutesByLoc.get(p.location) ?? null } : p));
   notes.push(...coverageNotes(exec.coverage, unitWord));
+  if (spec.recommendation_note && spec.resolvedPlayerIds && spec.resolvedPlayerIds.length) { // who gave the recommendation the previous question was about
+    const { rows: gave } = await chatPool.query(
+      `SELECT p.name AS player, r.report_date, s.name AS scout FROM reports r JOIN players p ON p.id = r.player_id LEFT JOIN scouts s ON s.id = r.scout_id
+       WHERE r.player_id = ANY($1::int[]) AND lower(r.recommendation) = lower($2) ORDER BY p.name, r.report_date`, [spec.resolvedPlayerIds, spec.recommendation_note]);
+    if (gave.length) notes.push(`“${spec.recommendation_note}” was written by: ${gave.map((g) => `${g.scout || 'an unknown scout'} for ${g.player} (${g.report_date})`).join('; ')}.`);
+  }
   const recFilter = spec.unit === 'player' && spec.recommendation_scope === 'all' ? spec.filters.find((f) => f.field === 'recommendation' && f.op === 'eq') : null;
   if (recFilter) {
     const other = (exec.rows || []).filter((p) => String(p.recommendation || '').toLowerCase() !== String(recFilter.value).toLowerCase()).length;
@@ -510,6 +648,10 @@ async function answerData(message, planned, opts, timings) {
     case 'list': {
       if (!exec.count) return { ...out, players: [], answer: `No ${unitWord}s match.` };
       const lines = spec.unit === 'report' ? rows.map(reportLine) : rows.map(playerLine);
+      if (spec.top_n && spec.unit === 'player') {
+        const key = spec.sort && spec.sort.field === 'overall_potential_score' ? 'potential' : 'overall score';
+        return { ...out, players: rows, answer: `Found ${about}${plural(exec.count, unitWord)}${exec.count > rows.length ? `, showing the top ${rows.length}` : ''}, ranked by ${key}. The best ${Math.min(spec.top_n, rows.length)}: ${lines.slice(0, spec.top_n).join('; ')}.` };
+      }
       return {
         ...out, players: rows,
         answer: `Found ${about}${plural(exec.count, unitWord)}${exec.count > rows.length ? `, showing the ${hasContent && meaningRes && !spec.sort ? 'best matching' : 'top'} ${rows.length}` : ''}: ${lines.join('; ')}.`,

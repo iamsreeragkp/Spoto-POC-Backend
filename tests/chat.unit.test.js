@@ -44,11 +44,11 @@ test('normalizeSpec: aggregate without a valid statistic falls back to count', (
 
 test('normalizeSpec: limits, players and meaning are bounded', () => {
   const { spec } = normalizeSpec({
-    intent: 'compare', limit: 10000, players: ['A', 'B', 'C', 'D', 'E', 'F', 'A'],
+    intent: 'compare', limit: 10000, players: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'A'],
     meaning: { query: 'x'.repeat(1000), fields: ['bogus'] },
   }, vocab);
   assert.equal(spec.limit, 100);
-  assert.equal(spec.players.length, 5);
+  assert.equal(spec.players.length, 8);
   assert.equal(spec.meaning.query.length, 300);
   assert.deepEqual(spec.meaning.fields, ['any']);
 });
@@ -385,4 +385,86 @@ test('focusSetFromContext: "these 5" = the players of the recent answers togethe
   assert.equal(focusSetFromContext('which of these 3 is best', ctx, other), other);
   const cnt = { route: 'data', spec: { intent: 'count', players: [], filters: [] } };
   assert.equal(focusSetFromContext('how many of these 5 are left-footed', ctx, cnt), cnt, 'counts are not about named players');
+});
+
+test('scoutsOfPreviousPlayers: a question about the scouts of "these players" uses the previous answer\u2019s players', () => {
+  const { scoutsOfPreviousPlayers } = require('../src/chat/followup');
+  const ctx = { turns: [{ route: 'data', intent: 'list', player_names: ['Anna Testsen', 'Carl Baker'] }], lastSpec: { filters: [{ field: 'recommendation', op: 'eq', value: 'Golden-boy!!!' }] } };
+  assert.deepEqual(scoutsOfPreviousPlayers('Who were the scouts who found these players?', ctx), { players: ['Anna Testsen', 'Carl Baker'], recommendation: 'Golden-boy!!!' });
+  assert.deepEqual(scoutsOfPreviousPlayers('Which scouts wrote about them?', { turns: ctx.turns, lastSpec: null }), { players: ['Anna Testsen', 'Carl Baker'], recommendation: null });
+  assert.equal(scoutsOfPreviousPlayers('Who recommended them?', ctx).players.length, 2);
+  assert.equal(scoutsOfPreviousPlayers('How many reports did each scout write?', ctx), null, 'no reference to the previous players');
+  assert.equal(scoutsOfPreviousPlayers('Who are the scouts?', ctx), null, 'no reference to the previous players');
+  assert.equal(scoutsOfPreviousPlayers('average score by scout for these players', ctx), null, 'a statistic, not a scout list');
+  assert.equal(scoutsOfPreviousPlayers('Which scouts wrote about them?', { turns: [] }), null);
+});
+
+test('nameFiltersNeedAName with a vocabulary: "left-footed" given as a name becomes the recorded foot value', () => {
+  const { nameFiltersNeedAName } = require('../src/chat/followup');
+  const v = { ...vocab, recommendations: [], stageOfGrowth: [], strongFoot: ['Right', 'Left', 'Two-footed'], positions: ['No. 9'] };
+  const plan = { route: 'data', spec: { intent: 'list', unit: 'player', filters: [{ field: 'position', op: 'contains', value: 'centre-back' }, { field: 'player_name', op: 'contains', value: 'left-footed' }], tags: [], text: [], meaning: null, players: [], assumptions: [] } };
+  const out = nameFiltersNeedAName('only the left-footed ones', plan, null, (t) => t, v).spec;
+  assert.deepEqual(out.filters.map((f) => `${f.field}=${f.value}`), ['position=centre-back', 'strong_foot=Left']);
+  assert.equal(out.text.length, 0);
+});
+
+test('normalizeSpec: a recorded value given as a tag that does not exist ("Left-footed" as a physical tag) becomes the filter', () => {
+  const v = { ...vocab, recommendations: [], stageOfGrowth: [], strongFoot: ['Right', 'Left', 'Two-footed'], positions: ['No. 9'] };
+  const { spec } = normalizeSpec({ intent: 'list', tags: [{ category: 'physical', any_of: ['Left-footed'] }], text: [] }, v);
+  assert.deepEqual(spec.filters, [{ field: 'strong_foot', op: 'eq', value: 'Left' }]);
+  assert.equal(spec.text.length, 0);
+  assert.equal(spec.tags.length, 0);
+  const other = normalizeSpec({ intent: 'list', tags: [{ category: 'physical', any_of: ['Jumping ability'] }] }, v).spec;
+  assert.equal(other.filters.length, 0, 'an unknown tag still falls back to a keyword search');
+  assert.equal(other.text.length, 1);
+});
+
+test('normalizeSpec: the one word "Left" given as a (non-existing) tag is the strong-foot filter, but as a plain keyword it stays a keyword', () => {
+  const v = { ...vocab, recommendations: [], stageOfGrowth: [], strongFoot: ['Right', 'Left', 'Two-footed'], positions: [] };
+  const a = normalizeSpec({ intent: 'list', tags: [{ category: 'physical', any_of: ['Left'] }] }, v).spec;
+  assert.deepEqual(a.filters, [{ field: 'strong_foot', op: 'eq', value: 'Left' }]);
+  const b = normalizeSpec({ intent: 'list', text: [{ fields: ['any'], any_of: ['left'] }] }, v).spec;
+  assert.equal(b.filters.length, 0);
+  assert.equal(b.text.length, 1);
+});
+
+test('ensureFootFilter: a named foot with no condition in the plan gets the strong-foot filter; other plans are left alone', () => {
+  const { ensureFootFilter } = require('../src/chat/followup');
+  const v = { strongFoot: ['Right', 'Left', 'Two-footed'] };
+  const plan = (spec) => ({ route: 'data', spec: { intent: 'list', filters: [{ field: 'position', op: 'contains', value: 'centre-back' }], tags: [], text: [], meaning: null, assumptions: [], ...spec } });
+  assert.deepEqual(ensureFootFilter('only the left-footed ones', plan({}), v).spec.filters.map((f) => f.value), ['centre-back', 'Left']);
+  assert.equal(ensureFootFilter('and the right foot players?', plan({}), v).spec.filters[1].value, 'Right');
+  assert.equal(ensureFootFilter('the two-footed ones', plan({}), v).spec.filters[1].value, 'Two-footed');
+  const has = plan({ filters: [{ field: 'strong_foot', op: 'eq', value: 'Left' }] });
+  assert.equal(ensureFootFilter('only the left-footed ones', has, v), has);
+  const withText = plan({ text: [{ fields: ['any'], any_of: ['strike'] }] });
+  assert.equal(ensureFootFilter('players with a good left-footed strike', withText, v), withText, 'a keyword search is present');
+  const other = plan({});
+  assert.equal(ensureFootFilter('only the strikers', other, v), other);
+});
+
+test('showAllThenRank: "show me all the X, and then rank the best N" lists everyone and calls out the best N', () => {
+  const { showAllThenRank } = require('../src/chat/followup');
+  const plan = (spec) => ({ route: 'data', spec: { intent: 'list', unit: 'player', limit: 3, sort: { field: 'overall_score', direction: 'desc' }, filters: [], assumptions: [], ...spec } });
+  const a = showAllThenRank('Show me all the strikers assessed, and then rank the best 3', plan({})).spec;
+  assert.equal(a.limit, 25);
+  assert.equal(a.top_n, 3);
+  assert.equal(a.intent, 'list');
+  const b = showAllThenRank('Find all the wingers and then show the top 5 by potential', plan({ limit: 5, sort: { field: 'overall_potential_score', direction: 'desc' } })).spec;
+  assert.equal(b.top_n, 5);
+  assert.equal(b.sort.field, 'overall_potential_score');
+  const plain = plan({});
+  assert.equal(showAllThenRank('Top 3 strikers', plain), plain, 'no "show all"');
+  assert.equal(showAllThenRank('Show me all the strikers, rank the best 3', plan({ limit: 10 })).spec.limit, 10, 'the planner limit is not the number the user named');
+});
+
+test('editDistance: a swap of two neighbouring letters is one mistake', () => {
+  const { editDistance } = require('../src/chat/fold');
+  assert.equal(editDistance('krnoborg', 'kronborg'), 1);
+  assert.equal(editDistance('kronburg', 'kronborg'), 1);
+  assert.equal(editDistance('kronbrog', 'kronborg'), 1);
+  assert.equal(editDistance('carll', 'carl'), 1);
+  assert.equal(editDistance('amca', 'amcha'), 1);
+  assert.equal(editDistance('zzzzqq', 'kronborg') > 2, true);
+  assert.equal(editDistance('same', 'same'), 0);
 });

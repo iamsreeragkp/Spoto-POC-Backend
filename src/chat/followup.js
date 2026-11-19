@@ -2,6 +2,7 @@
 // The planner is told to merge the previous question's conditions into the new plan (prompt rule 14), but it
 // occasionally drops them. When the wording clearly refers to the previous result ("of them", "those", "these") and the
 // new plan has lost conditions the previous one had, they are put back. Conditions the new plan states itself win.
+const { normalizeSpec } = require('./spec');
 const REFERS_BACK = /\b(?:of|among|from|out of|within|in)\s+(?:them|those|these)\b|\b(?:those|these)\s+(?:ones|players|reports)\b|\bof the (?:above|previous|same)\b/i;
 
 function carryFollowUp(message, lastSpec, result) {
@@ -120,7 +121,7 @@ function explainToAnalysis(message, result) {
 // "players with "JL top18 in Denmark"" is not a name search: a real player name always reaches the planner as a name token (see
 // privacy.js), so a player_name filter in a question without any name token (and without "name/named/called") is a keyword search.
 // Name filters carried over from the previous question are left alone.
-function nameFiltersNeedAName(message, result, lastSpec, maskFn) {
+function nameFiltersNeedAName(message, result, lastSpec, maskFn, vocab) {
   const s = result && result.route === 'data' && result.spec;
   if (!s || !maskFn) return result;
   const old = new Set(((lastSpec && lastSpec.filters) || []).filter((f) => f.field === 'player_name').map((f) => String(f.value).toLowerCase()));
@@ -128,10 +129,11 @@ function nameFiltersNeedAName(message, result, lastSpec, maskFn) {
   if (!fresh.length) return result;
   if (/\b(?:name|named|called)\b/i.test(message) || /\u27E6[PN]\d+\u27E7/.test(maskFn(message))) return result;
   const phrase = fresh.map((f) => f.value).join(' ');
-  return { ...result, spec: { ...s,
-    filters: (s.filters || []).filter((f) => !fresh.includes(f)),
-    text: [...(s.text || []), { fields: ['any'], any_of: [phrase], tag_matches: [] }],
-    assumptions: [...(s.assumptions || []), `\u201C${phrase}\u201D is not a player name, so it was searched for in the scouts\u2019 text.`].slice(0, 8) } };
+  const note = `\u201C${phrase}\u201D is not a player name, so it was searched for in the scouts\u2019 text.`;
+  const moved = { ...s, filters: (s.filters || []).filter((f) => !fresh.includes(f)), text: [...(s.text || []), { fields: ['any'], any_of: [phrase], tag_matches: [] }] };
+  // a keyword such as "left-footed" is a recorded value ("Left"), not text: run the normal keyword rules (tags, recorded values) on it
+  const spec = vocab ? normalizeSpec(moved, vocab).spec : moved;
+  return { ...result, spec: { ...spec, assumptions: [...(spec.assumptions || []), note].slice(0, 8) } };
 }
 
 // "which one of these 5 has the higher ranking?": a question about who is best/higher among several named players is a ranking of
@@ -179,4 +181,46 @@ function focusSetFromContext(message, context, result) {
     assumptions: [...(s.assumptions || []), `Used the ${n} players shown in your recent questions.`].slice(0, 8) } };
 }
 
-module.exports = { focusSetFromContext, rankAmongPlayers, addToPreviousSet, nameFiltersNeedAName, explainToAnalysis, toCompareReports, carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, REFERS_BACK };
+// "Who were the scouts who found these players?" / "which scouts wrote about them?": a question about the SCOUTS of the players of the
+// previous answer. Returns { players, recommendation } (recommendation = the value the previous question filtered on, e.g. a golden
+// boy, so the answer can also say who gave it) or null.
+const SCOUT_WORDS = /\bscouts?\b|\bwho\b[^?]*\b(?:found|discovered|spotted|recommended|reported|wrote|assessed|scouted|watched|identified|rated)\b/i;
+function scoutsOfPreviousPlayers(message, context) {
+  if (!SCOUT_WORDS.test(message) || !/\b(?:these|those|them|they|their)\b/i.test(message) || /\b(?:how many|average|per)\b/i.test(message)) return null;
+  const turns = (context && context.turns) || [];
+  const last = [...turns].reverse().find((t) => t.route === 'data' && t.player_names && t.player_names.length);
+  if (!last || last.player_names.length > 8) return null;
+  const rec = ((context && context.lastSpec && context.lastSpec.filters) || []).find((f) => f.field === 'recommendation' && f.op === 'eq');
+  return { players: last.player_names.slice(0, 8), recommendation: rec ? String(rec.value) : null };
+}
+
+// "only the left-footed ones": the planner occasionally drops the condition and repeats the previous list. If the question names a
+// foot and the plan has no foot filter and no keyword/tag/meaning search at all, the foot filter is added.
+const FOOT_PHRASE = /\b(left|right)[\s-]*(?:footed|foot|feet)\b|\b(two|both)[\s-]*(?:footed|feet)\b/i;
+function ensureFootFilter(message, result, vocab) {
+  const s = result && result.route === 'data' && result.spec;
+  const m = FOOT_PHRASE.exec(String(message));
+  if (!s || !m || !vocab || !Array.isArray(vocab.strongFoot) || ['profile', 'compare'].includes(s.intent)) return result;
+  if ((s.filters || []).some((f) => f.field === 'strong_foot') || (s.tags || []).length || (s.text || []).length || s.meaning) return result;
+  const want = (m[1] || m[2]).toLowerCase();
+  const value = vocab.strongFoot.find((v) => { const n = String(v).toLowerCase(); return want === 'left' || want === 'right' ? n === want : /two|both/.test(n); });
+  if (!value) return result;
+  return { ...result, spec: { ...s, filters: [...(s.filters || []), { field: 'strong_foot', op: 'eq', value: String(value) }],
+    assumptions: [...(s.assumptions || []), `Added the foot condition (${value}) from your question.`].slice(0, 8) } };
+}
+
+// "Show me all the strikers assessed, and then rank the best 3": two requests in one message. The planner turns the second one into a
+// limit and the first one is lost; instead everyone is listed (ranked) and the best N are called out in the answer (spec.top_n).
+const SHOW_ALL_THEN_RANK = /\b(?:show|list|find|display|give)\b[^?]*\ball\b[^?]*?(?:,|\band\b|\bthen\b)[^?]*\b(?:rank|ranking|top|best)\b[^?]*?\b(\d+)\b/i;
+function showAllThenRank(message, result) {
+  const s = result && result.route === 'data' && result.spec;
+  const m = SHOW_ALL_THEN_RANK.exec(String(message));
+  if (!s || !m || s.unit !== 'player' || !['list', 'comment_analysis'].includes(s.intent)) return result;
+  const n = Number(m[1]);
+  if (!(n >= 1 && n <= 10) || (s.limit && s.limit !== n)) return result;
+  return { ...result, spec: { ...s, intent: 'list', limit: 25, top_n: n,
+    sort: s.sort && ['overall_score', 'overall_potential_score'].includes(s.sort.field) ? s.sort : { field: 'overall_score', direction: 'desc' },
+    assumptions: [...(s.assumptions || []), `Listed all matching players ranked by score, and picked out the best ${n}.`].slice(0, 8) } };
+}
+
+module.exports = { showAllThenRank, ensureFootFilter, scoutsOfPreviousPlayers, focusSetFromContext, rankAmongPlayers, addToPreviousSet, nameFiltersNeedAName, explainToAnalysis, toCompareReports, carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, REFERS_BACK };

@@ -53,7 +53,7 @@ const SORT_FIELDS = [...NUM_FIELDS, 'report_date', 'first_report_date', 'player_
 
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 25;
-const MAX_PLAYERS = 5;
+const MAX_PLAYERS = 8;
 
 const nullable = (schema) => ({ anyOf: [{ type: 'null' }, schema] });
 const obj = (properties) => ({ type: 'object', additionalProperties: false, required: Object.keys(properties), properties });
@@ -193,7 +193,7 @@ function normalizeSpec(raw, vocab) {
   // (much faster than text search over tag lists). Both parts stay one OR-condition: { fields, any_of, tag_matches }.
   // A keyword that is a recorded value, or that value plus a filler word ("left-footed", "golden boy players"), is that value as a filter
   const FILLER = new Set(['footed', 'foot', 'feet', 'player', 'players']);
-  const matchListed = (term) => {
+  const matchListed = (term, short = false) => { // short: a one-word value is accepted too (it came from a tag the AI meant as an attribute)
     const clean = norm(term);
     const cw = clean.split(' ').filter(Boolean);
     for (const [field, list] of Object.entries(LISTED)) {
@@ -201,7 +201,7 @@ function normalizeSpec(raw, vocab) {
       for (const v of list) {
         const vw = norm(v).split(' ').filter(Boolean);
         if (!vw.length) continue;
-        if (clean.length >= 6 && norm(v) === clean) return [field, String(v)];
+        if ((short || clean.length >= 6) && norm(v) === clean) return [field, String(v)];
         const rest = cw.filter((w) => !vw.includes(w));
         if (vw.every((w) => cw.includes(w)) && rest.length && rest.every((w) => FILLER.has(w))) return [field, String(v)];
       }
@@ -209,10 +209,11 @@ function normalizeSpec(raw, vocab) {
     return null;
   };
   const rawText = [];
-  for (const t of raw.text || []) {
+  const fromTags = new Set(extraText);
+  for (const t of [...(raw.text || []), ...extraText]) { // also the fallback from tags that do not exist ("Left-footed" given as a physical tag)
     const keep = [];
     for (const term of t.any_of || []) {
-      const hit = matchListed(term);
+      const hit = matchListed(term, fromTags.has(t));
       if (hit) {
         const value = hit[1];
         if (!spec.filters.some((f) => f.field === hit[0] && f.op === 'eq' && f.value === value)) spec.filters.push({ field: hit[0], op: 'eq', value });
@@ -221,7 +222,7 @@ function normalizeSpec(raw, vocab) {
     }
     rawText.push({ ...t, any_of: keep });
   }
-  for (const t of [...rawText, ...extraText]) {
+  for (const t of rawText) {
     let fields = [...new Set((t.fields || []).filter((f) => TEXT_FIELDS.includes(f)))];
     if (!fields.length) fields = ['any'];
     const terms = (t.any_of || []).map(cleanTerm).filter((x) => x.length >= 2).slice(0, 12);

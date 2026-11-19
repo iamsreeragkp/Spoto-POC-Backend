@@ -46,7 +46,13 @@ function buildWhere(spec, near, meaningRes, { exclude } = {}) {
     if (f.op === 'not_null') return parts.push(`${col} IS NOT NULL`);
     if (def.kind === 'text') {
       if (FOLDED_FIELDS.has(f.field) && f.op === 'contains') return parts.push(`${foldSql(col)} LIKE ${add(containsPattern(f.value))}`);
-      if (FOLDED_FIELDS.has(f.field) && f.op === 'eq') return parts.push(`${foldSql(col)} = ${add(foldText(f.value))}`);
+      if (FOLDED_FIELDS.has(f.field) && f.op === 'eq') {
+        // "reports for Kronborg": the AI asks for an exact name; if no player/scout has exactly that name, a name containing it matches
+        const src = f.field === 'player_name' ? 'players' : 'scouts';
+        const exactP = add(foldText(f.value));
+        const likeP = add(containsPattern(f.value));
+        return parts.push(`(${foldSql(col)} = ${exactP} OR (NOT EXISTS (SELECT 1 FROM ${src} x WHERE ${foldSql('x.name')} = ${exactP}) AND ${foldSql(col)} LIKE ${likeP}))`);
+      }
       if (f.op === 'contains') return parts.push(`${col} ILIKE ${add(`%${f.value}%`)}`);
       if (f.op === 'neq') return parts.push(`(${col} IS NULL OR lower(${col}) <> lower(${add(f.value)}))`);
       if (OP_SQL[f.op]) return parts.push(`${col} ${OP_SQL[f.op]} ${add(f.value)}`); // e.g. report_month >= '2025-01'
