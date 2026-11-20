@@ -49,6 +49,18 @@ function buildWhere(spec, near, meaningRes, { exclude } = {}) {
       const n = Number(f.value);
       return parts.push(`(pl.age_group_label ~ ${add(`(^|[^0-9])${n}([^0-9]|$)`)} OR pl.age_group = ${add(new Date().getFullYear() - n + 1)})`);
     }
+    if (f.field === 'scout_name' && spec.unit === 'player' && ['eq', 'contains'].includes(f.op)) {
+      // "players assessed by Larsen": any of the player's reports, not only the latest (written by someone else for some players)
+      const c = foldSql('ss.name');
+      const likeP = add(containsPattern(f.value));
+      let cond = `${c} LIKE ${likeP}`;
+      if (f.op === 'eq') {
+        const exactP = add(foldText(f.value));
+        cond = `(${c} = ${exactP} OR (NOT EXISTS (SELECT 1 FROM scouts x WHERE ${foldSql('x.name')} = ${exactP}) AND ${c} LIKE ${likeP}))`;
+      }
+      const type = spec.filters.find((x) => x.field === 'report_type' && x.op === 'eq');
+      return parts.push(`EXISTS (SELECT 1 FROM reports rr JOIN scouts ss ON ss.id = rr.scout_id WHERE rr.player_id = pl.player_id${type ? ` AND rr.report_type = ${add(type.value)}` : ''} AND ${cond})`);
+    }
     if (def.kind === 'text') {
       if (f.op === 'contains_any') return parts.push(`(${[].concat(f.value).map((v) => `${col} ILIKE ${add(`%${v}%`)}`).join(' OR ')})`); // either position
       if (FOLDED_FIELDS.has(f.field) && f.op === 'contains') return parts.push(`${foldSql(col)} LIKE ${add(containsPattern(f.value))}`);

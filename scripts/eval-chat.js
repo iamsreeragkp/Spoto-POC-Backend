@@ -201,6 +201,12 @@ const CASES = [
       && r.players[0].name === results[0].players[0].name && r.answer.includes(results[0].players[0].name)],
   ['Who are the best 3 players with feedback reports?', (r) => r.players.length === 3 && /#\d+/.test(r.answer)],
 
+  ['Which players from AaB were assessed by Larsen?',
+    async (r) => r.count === await n("SELECT count(DISTINCT r.player_id) n FROM reports r JOIN scouts s ON s.id = r.scout_id JOIN players p ON p.id = r.player_id JOIN teams t ON t.id = p.team_id WHERE s.name ILIKE '%larsen%' AND t.name = 'AaB'")],
+  [['Find me the top - 5 best players in ranking and explain why are they the best ones.', 'Did you take the "golden boy" characteristics into account?'],
+    async (r) => r.route === 'data' && r.count === await n("SELECT count(DISTINCT player_id) n FROM reports WHERE recommendation = 'Golden-boy!!!'") && /not a ranking criterion/.test(r.answer)],
+  [['Top 3 players by overall score', 'did you consider speed?'], (r) => r.intent === 'comment_analysis' && r.route === 'data' && /speed/i.test(r.answer)],
+
   // ---- follow-up conversations ----
   [['Show the centre-backs', 'only the left-footed ones', 'how many of them are born in 2012?'],
     async (r, s) => r.intent === 'count' && r.count === await n("SELECT count(*) n FROM player_latest WHERE position ILIKE '%centre-back%' AND strong_foot = 'Left' AND age_group = 2012")],

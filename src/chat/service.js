@@ -379,6 +379,40 @@ function reportForLlm(r, names) {
     ...cats].filter(Boolean).join('\n');
 }
 
+/** "Did you take the golden boy into account?" after a ranking: a recommendation value is answered from the data. */
+async function recommendationCriteria(message, spec, vocab) {
+  const squash = (t) => foldText(String(t)).replace(/[^a-z0-9]/g, '');
+  const m = squash(message);
+  const rec = (vocab.recommendations || []).find((r) => squash(r).length >= 6 && m.includes(squash(r)));
+  if (!rec) return null;
+  const shown = spec.explain_previous.players;
+  const { rows: ranked } = await chatPool.query(
+    `SELECT pl.player_name, EXISTS (SELECT 1 FROM reports r WHERE r.player_id = pl.player_id AND r.recommendation = $2) AS has
+     FROM player_latest pl WHERE pl.player_name = ANY($1::text[])`, [shown, rec]);
+  const { rows: withRec } = await chatPool.query(
+    `SELECT pl.*, pl.player_name AS name FROM player_latest pl
+     WHERE EXISTS (SELECT 1 FROM reports r WHERE r.player_id = pl.player_id AND r.recommendation = $1)
+     ORDER BY pl.overall_score DESC NULLS LAST, pl.overall_potential_score DESC NULLS LAST, pl.player_name LIMIT 10`, [rec]);
+  const inTop = ranked.filter((r) => r.has).map((r) => r.player_name);
+  const minShown = (await chatPool.query('SELECT min(overall_score) AS m FROM player_latest WHERE player_name = ANY($1::text[])', [shown])).rows[0].m;
+  const plain = rec.replace(/!+/g, '').toLowerCase();
+  const lines = [`No – the ranking was made by overall score (potential breaks ties)${spec.explain_previous.explained ? ' and then explained from the reports' : ''}; the “${rec}” recommendation was not a ranking criterion.`];
+  lines.push(inTop.length ? `Of the ${shown.length} ranked players, ${inTop.join(', ')} ${inTop.length === 1 ? 'has' : 'have'} a “${rec}” recommendation.`
+    : `None of the ${shown.length} ranked players has a “${rec}” recommendation.`);
+  if (withRec.length) {
+    lines.push(listBlock(`Players with a “${rec}” recommendation`, withRec.map(playerRow), false));
+    const lower = withRec.filter((p) => !inTop.includes(p.player_name) && p.overall_score != null && minShown != null && p.overall_score < minShown);
+    if (lower.length) {
+      lines.push(`${lower.length === withRec.length ? (lower.length === 1 ? 'This player is' : 'They are') : `${lower.map((p) => p.player_name).join(', ')} ${lower.length === 1 ? 'is' : 'are'}`} not in the ranking because the latest overall score is lower than the lowest ranked score (${minShown}).`);
+    }
+    lines.push(`Ask “show the ${plain} players” to see them on their own.`);
+  }
+  return {
+    route: 'data', intent: 'comment_analysis', spec: { ...spec, explain_previous: undefined }, count: withRec.length, answer: lines.join('\n\n'),
+    players: withRec, assumptions: [`Checked the “${rec}” recommendation in all reports of the ranked players.`], notes: [],
+  };
+}
+
 /** "Compare the reports of this player": a table of the player's reports (oldest first) plus, if allowed, an AI comparison. */
 async function compareOwnReports(playerId, rows, out, { message, opts, status, timings, assumptions }) {
   const [{ rows: pls }, { rows: reps }] = await Promise.all([
@@ -458,7 +492,10 @@ async function ask(message, opts = {}) {
   const typo = await typoInMessage(message, vocab).catch((e) => { console.error('typo check failed:', e.message); return null; });
   const chosen = context.pending && pickOption(message, context.pending._pending.options);
   const why = !chosen && explainPreviousRanking(message, context);
-  if (why) {
+  const recAnswer = why && why.explain_previous.criteria ? await recommendationCriteria(message, why, vocab) : null;
+  if (recAnswer) {
+    planned = { route: 'answered', result: recAnswer, planCached: false };
+  } else if (why) {
     planned = { route: 'data', spec: why, warnings: [], planCached: false };
   } else if (chosen) { // "Which player do you mean by X?" answered: rerun that question with the chosen player
     const { _pending: pend, ...spec } = context.pending;
@@ -475,7 +512,10 @@ async function ask(message, opts = {}) {
   }
 
   let result;
-  if (planned.route === 'data') {
+  if (planned.route === 'answered') {
+    result = planned.result;
+    if (opts.onToken) opts.onToken(result.answer);
+  } else if (planned.route === 'data') {
     result = await answerData(message, planned, opts, timings);
   } else if (planned.route === 'general' || planned.route === 'help') {
     status(planned.route === 'help' ? 'Explaining…' : 'Thinking…');
@@ -732,7 +772,10 @@ ${listBlock(`The best ${best}`, lines.slice(0, spec.top_n), true)}${rows.length 
          FROM reports r JOIN players p ON p.id = r.player_id WHERE r.id = ANY($1::int[])`, [ids]);
       const t0 = Date.now();
       const ex = spec.explain_previous;
-      const question = ex
+      const how = `The ranking was made by overall score (potential breaks ties)${ex && ex.explained ? ' and then explained from the reports' : ''}; recommendations and individual traits were not ranking criteria.`;
+      const question = ex && ex.criteria
+        ? `Earlier the administrator asked: ${ex.question}\nThe answer ranked: ${ex.players.join(', ') || '(no players)'}\n${how}\nNow they ask: ${message}\nAnswer that follow-up directly and honestly: first say whether it was part of the ranking (see above), then say for each ranked player what the reports say about it (or that they do not mention it), citing report ids.`
+        : ex
         ? `Earlier the administrator asked: ${ex.question}\nThe answer named: ${ex.players.join(', ') || '(no players)'}\nNow they ask: ${message}\nExplain from the reports why the named player(s) came out on top (if the reports do not support that, say so honestly and say who looks stronger).`
         : spec.judge ? `${message}\n(No ${spec.judge.field === 'overall_score' ? 'overall' : 'potential'} scores are recorded for these players: judge from what the reports say, pick the best ${spec.judge.top}, and say that the ranking is based on the written reports.)`
           : message;

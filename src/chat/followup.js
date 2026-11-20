@@ -258,15 +258,18 @@ function ageBandFromWords(message, result, year = new Date().getFullYear()) {
 
 // "Why is he the top player?" / "why these?" right after a ranked list: explain that ranking from the reports (the planner
 // would search the text for the question's words instead). "Why not X?" is handled by addToPreviousSet.
+// "Did you take the golden boy characteristics into account?" / "did you consider speed?" about the ranking just given
+const CRITERIA_WORDS = /\binto account\b|\b(?:did|have) you (?:also )?(?:consider|include|use|look at|check|count)\b|\bwas .{1,40}\bconsidered\b/i;
 function explainPreviousRanking(message, context) {
-  if (!/^\s*(?:and\s+)?why\b/i.test(message) || /^\s*(?:and\s+)?why\s+not\b/i.test(message)) return null;
+  const criteria = CRITERIA_WORDS.test(message);
+  if (!criteria && (!/^\s*(?:and\s+)?why\b/i.test(message) || /^\s*(?:and\s+)?why\s+not\b/i.test(message))) return null;
   const turns = (context && context.turns) || [];
   const last = turns[turns.length - 1];
   const s = context && context.lastSpec;
   if (!last || last.route !== 'data' || !s || !['list', 'comment_analysis'].includes(s.intent) || s.unit !== 'player') return null;
   if (!(s.sort || (s.limit && s.limit <= 10))) return null;
   const shown = (last.player_names || []).slice(0, Math.min(s.limit || 8, 8));
-  return { ...s, intent: 'comment_analysis', explain_previous: { question: last.question, players: shown },
+  return { ...s, intent: 'comment_analysis', explain_previous: { question: last.question, players: shown, criteria, explained: s.intent === 'comment_analysis' },
     assumptions: [...(s.assumptions || []).filter((a) => !/explanation/.test(a)), 'Explained the previous ranking from the reports.'].slice(0, 8) };
 }
 
