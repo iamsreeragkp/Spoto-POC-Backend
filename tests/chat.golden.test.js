@@ -36,7 +36,7 @@ test('Q3 centre-backs with father taller than 185 (midpoint) + coverage note', a
   assert.equal(r.count, await one(`SELECT COUNT(*) n FROM player_latest WHERE position ILIKE '%centre-back%' AND father_height_mid > 185`));
   const cb = await one(`SELECT COUNT(*) n FROM player_latest WHERE position ILIKE '%centre-back%'`);
   const known = await one(`SELECT COUNT(father_height_mid) n FROM player_latest WHERE position ILIKE '%centre-back%'`);
-  if (known < cb) assert.match(r.notes.join(' '), new RegExp(`recorded for only ${known} of ${cb}`));
+  if (known < cb) assert.match(r.notes.join(' '), new RegExp(`${cb - known} players have no father's height recorded.*recorded for ${known} of ${cb}`));
 });
 
 test('Q4 within 1 hour of Ikast (cached driving times)', async () => {

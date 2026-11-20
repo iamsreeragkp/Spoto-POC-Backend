@@ -198,10 +198,11 @@ function buildQueries(spec, near, meaningRes) {
     out.listParams = listParams;
   }
 
-  // Data coverage for sparse fields used as filters: "recorded for N of M rows matching the other criteria"
+  // Data coverage for fields used as filters: "recorded for N of M rows matching the other criteria" (e.g. 2 players have no gender)
+  const NO_COVERAGE = new Set(['player_name', 'scout_name', 'report_type', 'assessment_count', 'feedback_count', 'report_count', 'report_year', 'report_month']);
   const sparse = new Map();
   spec.filters.forEach((f, i) => {
-    if (FIELDS[f.field].sparse && !['is_null', 'not_null'].includes(f.op) && !sparse.has(f.field)) sparse.set(f.field, i);
+    if (!NO_COVERAGE.has(f.field) && !['is_null', 'not_null', 'u_age', 'neq'].includes(f.op) && !sparse.has(f.field)) sparse.set(f.field, i);
   });
   out.coverage = [...sparse.entries()].map(([field]) => {
     const others = { ...spec, filters: spec.filters.filter((f) => f.field !== field) };

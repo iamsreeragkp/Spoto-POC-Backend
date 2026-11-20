@@ -102,8 +102,10 @@ async function rangeNotes(spec, unit) {
 }
 
 function coverageNotes(coverage, unit) {
-  return coverage.filter((c) => c.known < c.total).map((c) =>
-    `${label(c.field)} is recorded for only ${fmt(c.known)} of ${fmt(c.total)} ${unit}s matching your other criteria; ${unit}s without it are not counted.`);
+  return coverage.filter((c) => c.known < c.total).map((c) => {
+    const missing = c.total - c.known;
+    return `${plural(missing, unit)} ${missing === 1 ? 'has' : 'have'} no ${label(c.field).toLowerCase()} recorded, so ${missing === 1 ? 'it is' : 'they are'} not included (${label(c.field).toLowerCase()} is recorded for ${fmt(c.known)} of ${fmt(c.total)}).`;
+  });
 }
 
 const playerLine = (p) => {
@@ -671,7 +673,12 @@ async function answerData(message, planned, opts, timings) {
 
   const minutesByLoc = near ? new Map(near.locations.map((l) => [l.location, l.minutes])) : null;
   let rows = (exec.rows || []).map((p) => (minutesByLoc ? { ...p, drive_minutes: minutesByLoc.get(p.location) ?? null } : p));
-  notes.push(...coverageNotes(exec.coverage, unitWord));
+  const gaps = coverageNotes(exec.coverage, unitWord);
+  if (Number(exec.count) === 0 && gaps.length && ['list', 'count', 'comment_analysis'].includes(spec.intent)) {
+    // "female players" -> none, but say that some players have no gender recorded at all
+    return { ...base, players: [], count: 0, answer: `No ${unitWord}s match.\n\nNote: ${gaps.join(' ')}` };
+  }
+  notes.push(...gaps);
   if (spec.recommendation_note && spec.resolvedPlayerIds && spec.resolvedPlayerIds.length) { // who gave the recommendation the previous question was about
     const { rows: gave } = await chatPool.query(
       `SELECT p.name AS player, r.report_date, s.name AS scout FROM reports r JOIN players p ON p.id = r.player_id LEFT JOIN scouts s ON s.id = r.scout_id

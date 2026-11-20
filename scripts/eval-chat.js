@@ -207,6 +207,9 @@ const CASES = [
     async (r) => r.route === 'data' && r.count === await n("SELECT count(DISTINCT player_id) n FROM reports WHERE recommendation = 'Golden-boy!!!'") && /not a ranking criterion/.test(r.answer)],
   [['Top 3 players by overall score', 'did you consider speed?'], (r) => r.intent === 'comment_analysis' && r.route === 'data' && /speed/i.test(r.answer)],
 
+  ['Show me all female players',
+    async (r) => r.count === 0 && new RegExp(`${await n('SELECT count(*) n FROM player_latest WHERE gender IS NULL')} players have no gender recorded`).test(r.answer)],
+
   // ---- follow-up conversations ----
   [['Show the centre-backs', 'only the left-footed ones', 'how many of them are born in 2012?'],
     async (r, s) => r.intent === 'count' && r.count === await n("SELECT count(*) n FROM player_latest WHERE position ILIKE '%centre-back%' AND strong_foot = 'Left' AND age_group = 2012")],
