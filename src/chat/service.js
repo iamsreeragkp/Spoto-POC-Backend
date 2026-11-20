@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const chatPool = require('../db/chatPool');
 const { getLlm } = require('./llm');
 const { normalizePlan, SpecError, FIELDS } = require('./spec');
-const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, toCompareReports, explainToAnalysis, nameFiltersNeedAName, pickOption, mergePositionAlternatives, dropTextRepeatingTags, rankAmongPlayers, addToPreviousSet, focusSetFromContext, scoutsOfPreviousPlayers, ensureFootFilter, showAllThenRank, reportTypeFromWords } = require('./followup');
+const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, toCompareReports, explainToAnalysis, nameFiltersNeedAName, pickOption, ageBandFromWords, mergePositionAlternatives, dropTextRepeatingTags, rankAmongPlayers, addToPreviousSet, focusSetFromContext, scoutsOfPreviousPlayers, ensureFootFilter, showAllThenRank, reportTypeFromWords } = require('./followup');
 const { foldText, foldSql, containsPattern, editDistance } = require('./fold');
 const { getMasker, aliasPlayer } = require('./privacy');
 const { getVocabulary, invalidateVocabulary } = require('./vocabulary');
@@ -59,7 +59,7 @@ const OP_TEXT = { eq: '=', neq: '≠', gt: '>', gte: '≥', lt: '<', lte: '≤',
 function describe(spec, near, meaningRes) {
   const out = [];
   if (spec.unit === 'report') out.push('counting individual reports');
-  out.push(...spec.filters.map((f) => (['is_null', 'not_null'].includes(f.op) ? `${f.field} ${OP_TEXT[f.op]}` : f.op === 'contains_any' ? `${f.field} contains ${[].concat(f.value).join(' or ')}` : `${f.field} ${OP_TEXT[f.op]} ${f.value}${f.field === 'recommendation' && f.op === 'eq' && spec.unit === 'player' ? (spec.recommendation_scope === 'latest' ? ' (in the latest report)' : ' (in any report)') : ''}`)));
+  out.push(...spec.filters.map((f) => (['is_null', 'not_null'].includes(f.op) ? `${f.field} ${OP_TEXT[f.op]}` : f.op === 'contains_any' ? `${f.field} contains ${[].concat(f.value).join(' or ')}` : f.op === 'u_age' ? `age group U${f.value}` : `${f.field} ${OP_TEXT[f.op]} ${f.value}${f.field === 'recommendation' && f.op === 'eq' && spec.unit === 'player' ? (spec.recommendation_scope === 'latest' ? ' (in the latest report)' : ' (in any report)') : ''}`)));
   if (spec.players.length) out.push(`players: ${spec.players.join(', ')}`);
   spec.tags.forEach((t) => out.push(`${t.category} tag is any of: ${t.any_of.join(' / ')}`));
   spec.text.forEach((t) => {
@@ -144,7 +144,7 @@ async function plan(message, context, vocab, timings) {
   timings.llm_ms = Date.now() - t0;
   const masker = getLlm().name === 'openai' ? await getMasker() : null;
   const maskFn = masker ? (t) => masker.mask(t, { allowParts: true }) : null; // names are only masked when text goes to the AI provider
-  let result = defaultRecommendationScope(message, explainToAnalysis(message, rankAmongPlayers(message, toCompareReports(message, collapseNameFilters(defaultTextScope(message, carryFollowUp(message, context.lastSpec, focusSetFromContext(message, context, nameFiltersNeedAName(message, mergeAdjacentNames(message, dropTextRepeatingTags(mergePositionAlternatives(normalizePlan(raw, vocab)))), context.lastSpec, maskFn, vocab)))), context.lastSpec)))));
+  let result = defaultRecommendationScope(message, explainToAnalysis(message, rankAmongPlayers(message, toCompareReports(message, collapseNameFilters(defaultTextScope(message, carryFollowUp(message, context.lastSpec, focusSetFromContext(message, context, nameFiltersNeedAName(message, mergeAdjacentNames(message, ageBandFromWords(message, dropTextRepeatingTags(mergePositionAlternatives(normalizePlan(raw, vocab))))), context.lastSpec, maskFn, vocab)))), context.lastSpec)))));
   result = reportTypeFromWords(message, showAllThenRank(message, ensureFootFilter(message, result, vocab)));
   // "Why not <player>?": add that player to the previous list and rank everyone together
   const mentioned = masker ? (masker.mask(message, { allowParts: true }).match(/\u27E6P\d+\u27E7/g) || []).map((t) => masker.unmask(t)) : [];

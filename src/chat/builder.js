@@ -45,6 +45,10 @@ function buildWhere(spec, near, meaningRes, { exclude } = {}) {
     const col = `pl.${def.col}`;
     if (f.op === 'is_null') return parts.push(`${col} IS NULL`);
     if (f.op === 'not_null') return parts.push(`${col} IS NOT NULL`);
+    if (f.op === 'u_age') { // "U14": label mentions 14, or birth year of the under-14 season
+      const n = Number(f.value);
+      return parts.push(`(pl.age_group_label ~ ${add(`(^|[^0-9])${n}([^0-9]|$)`)} OR pl.age_group = ${add(new Date().getFullYear() - n + 1)})`);
+    }
     if (def.kind === 'text') {
       if (f.op === 'contains_any') return parts.push(`(${[].concat(f.value).map((v) => `${col} ILIKE ${add(`%${v}%`)}`).join(' OR ')})`); // either position
       if (FOLDED_FIELDS.has(f.field) && f.op === 'contains') return parts.push(`${foldSql(col)} LIKE ${add(containsPattern(f.value))}`);

@@ -516,3 +516,21 @@ test('pickOption: the answer to "which player do you mean" picks one of the offe
   assert.equal(pickOption('Testsen', opts), null, 'a word both names share decides nothing');
   assert.equal(pickOption('how many strikers are there?', opts), null);
 });
+
+test('ageBandFromWords: "U14" covers age labels that mention 14 and the matching birth year', () => {
+  const { ageBandFromWords } = require('../src/chat/followup');
+  const plan = (filters = []) => ({ route: 'data', spec: { intent: 'list', unit: 'player', filters, assumptions: [] } });
+  const r = ageBandFromWords('Find me all U14 the players', plan([{ field: 'age_group', op: 'eq', value: 2013 }]), 2026);
+  assert.deepEqual(r.spec.filters, [{ field: 'age_group_label', op: 'u_age', value: 14 }]);
+  assert.match(r.spec.assumptions[0], /U13\/14, U14\/15.*born in 2013/);
+  assert.deepEqual(ageBandFromWords('how many U-15 players?', plan(), 2026).spec.filters, [{ field: 'age_group_label', op: 'u_age', value: 15 }]);
+  const limit = plan();
+  assert.equal(ageBandFromWords('top-3 under 16 y.o.', limit), limit, 'an age limit is not the U16 band');
+  const exact = plan([{ field: 'age_group_label', op: 'eq', value: 'U13/14' }]);
+  assert.equal(ageBandFromWords('players in U13/14', exact), exact, 'an exact label stays exact');
+  const none = plan();
+  assert.equal(ageBandFromWords('players born in 2012', none), none);
+  const { normalizeSpec } = require('../src/chat/spec');
+  const n = normalizeSpec({ intent: 'list', unit: 'player', filters: [{ field: 'age_group_label', op: 'u_age', value: 14 }] }, {});
+  assert.deepEqual((n.spec || n).filters, [{ field: 'age_group_label', op: 'u_age', value: 14 }], 'survives normalising again (follow-ups)');
+});

@@ -146,6 +146,8 @@ function normalizeSpec(raw, vocab) {
     if (!usable(f.field)) continue;
     if (f.field === 'year_of_birth' && Number(f.value) >= 1900 && Number(f.value) <= 2100) f = { ...f, field: 'age_group' }; // the birth-year cohort is age_group
     const def = FIELDS[f.field];
+    // operators the deterministic rules add (never offered to the AI): kept as they are when a plan is normalised again
+    if (f.op === 'u_age' || f.op === 'contains_any') { spec.filters.push({ field: f.field, op: f.op, value: f.value }); continue; }
     if (!OPS.includes(f.op)) { warnings.push(`Ignored unknown operator "${f.op}"`); continue; }
     let value = f.value == null ? '' : String(f.value).trim();
     if (def.kind === 'num' && !['is_null', 'not_null'].includes(f.op)) {

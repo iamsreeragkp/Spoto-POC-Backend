@@ -240,6 +240,22 @@ function reportTypeFromWords(message, result) {
     assumptions: [...(s.assumptions || []), `Only ${type} reports, as your question says.`].slice(0, 8) } };
 }
 
+// "U14": newer players carry labels like "U13/14" or "U14/15", older ones only a birth year.
+// U14 = a label that mentions 14, or born in (this year - 13) (the under-N season convention).
+function ageBandFromWords(message, result, year = new Date().getFullYear()) {
+  const s = result && result.route === 'data' && result.spec;
+  if (!s || /\bU\s?\d{1,2}\s*\/\s*\d/i.test(message)) return result; // an exact label ("U13/14") is matched as written
+  const m = /\bU\s?-?(\d{1,2})\b/i.exec(message); // "under 16 years old" is an age limit, not the U16 band
+  if (!m) return result;
+  const n = Number(m[1]);
+  if (n < 6 || n > 23) return result;
+  const born = year - n + 1;
+  const filters = (s.filters || []).filter((f) => f.field !== 'age_group_label' && !(f.field === 'age_group' && ['eq', 'gte', 'lte', 'gt', 'lt'].includes(f.op)));
+  filters.push({ field: 'age_group_label', op: 'u_age', value: n });
+  const note = `U${n} = players whose age group label mentions ${n} (e.g. U${n - 1}/${n}, U${n}/${n + 1}) or, for players with only a birth year, born in ${born}.`;
+  return { ...result, spec: { ...s, filters, assumptions: [...(s.assumptions || []), note] } };
+}
+
 // A player has one position, so two position conditions ("No. 9" and "Forward" for strikers) mean EITHER of them.
 function mergePositionAlternatives(result) {
   const s = result && result.route === 'data' && result.spec;
@@ -294,4 +310,4 @@ function pickOption(message, options) {
   return ord >= 0 && ord < options.length ? options[ord] : null;
 }
 
-module.exports = { pickOption, dropTextRepeatingTags, mergePositionAlternatives, reportTypeFromWords, showAllThenRank, ensureFootFilter, scoutsOfPreviousPlayers, focusSetFromContext, rankAmongPlayers, addToPreviousSet, nameFiltersNeedAName, explainToAnalysis, toCompareReports, carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, REFERS_BACK };
+module.exports = { ageBandFromWords, pickOption, dropTextRepeatingTags, mergePositionAlternatives, reportTypeFromWords, showAllThenRank, ensureFootFilter, scoutsOfPreviousPlayers, focusSetFromContext, rankAmongPlayers, addToPreviousSet, nameFiltersNeedAName, explainToAnalysis, toCompareReports, carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, REFERS_BACK };

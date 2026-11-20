@@ -192,6 +192,10 @@ const CASES = [
   [['How many feedback reports did each coach write?', 'and how many assessment reports did each scout write?'],
     async (r) => r.intent === 'group_count' && r.groups.reduce((a, g) => a + Number(g.count), 0) === await n("SELECT count(*) n FROM reports WHERE report_type = 'assessment' AND scout_id IS NOT NULL")],
 
+  ['Find me all the U14 players',
+    async (r) => r.count === await n(`SELECT count(*) n FROM player_latest WHERE age_group_label ~ '(^|[^0-9])14([^0-9]|$)' OR age_group = ${new Date().getFullYear() - 13}`)],
+  ['players in U13/14', async (r) => r.count === await n("SELECT count(*) n FROM player_latest WHERE age_group_label = 'U13/14'")],
+
   // ---- follow-up conversations ----
   [['Show the centre-backs', 'only the left-footed ones', 'how many of them are born in 2012?'],
     async (r, s) => r.intent === 'count' && r.count === await n("SELECT count(*) n FROM player_latest WHERE position ILIKE '%centre-back%' AND strong_foot = 'Left' AND age_group = 2012")],
