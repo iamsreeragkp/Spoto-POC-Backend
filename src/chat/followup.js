@@ -256,6 +256,20 @@ function ageBandFromWords(message, result, year = new Date().getFullYear()) {
   return { ...result, spec: { ...s, filters, assumptions: [...(s.assumptions || []), note] } };
 }
 
+// "Why is he the top player?" / "why these?" right after a ranked list: explain that ranking from the reports (the planner
+// would search the text for the question's words instead). "Why not X?" is handled by addToPreviousSet.
+function explainPreviousRanking(message, context) {
+  if (!/^\s*(?:and\s+)?why\b/i.test(message) || /^\s*(?:and\s+)?why\s+not\b/i.test(message)) return null;
+  const turns = (context && context.turns) || [];
+  const last = turns[turns.length - 1];
+  const s = context && context.lastSpec;
+  if (!last || last.route !== 'data' || !s || !['list', 'comment_analysis'].includes(s.intent) || s.unit !== 'player') return null;
+  if (!(s.sort || (s.limit && s.limit <= 10))) return null;
+  const shown = (last.player_names || []).slice(0, Math.min(s.limit || 8, 8));
+  return { ...s, intent: 'comment_analysis', explain_previous: { question: last.question, players: shown },
+    assumptions: [...(s.assumptions || []).filter((a) => !/explanation/.test(a)), 'Explained the previous ranking from the reports.'].slice(0, 8) };
+}
+
 // A player has one position, so two position conditions ("No. 9" and "Forward" for strikers) mean EITHER of them.
 function mergePositionAlternatives(result) {
   const s = result && result.route === 'data' && result.spec;
@@ -310,4 +324,4 @@ function pickOption(message, options) {
   return ord >= 0 && ord < options.length ? options[ord] : null;
 }
 
-module.exports = { ageBandFromWords, pickOption, dropTextRepeatingTags, mergePositionAlternatives, reportTypeFromWords, showAllThenRank, ensureFootFilter, scoutsOfPreviousPlayers, focusSetFromContext, rankAmongPlayers, addToPreviousSet, nameFiltersNeedAName, explainToAnalysis, toCompareReports, carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, REFERS_BACK };
+module.exports = { explainPreviousRanking, ageBandFromWords, pickOption, dropTextRepeatingTags, mergePositionAlternatives, reportTypeFromWords, showAllThenRank, ensureFootFilter, scoutsOfPreviousPlayers, focusSetFromContext, rankAmongPlayers, addToPreviousSet, nameFiltersNeedAName, explainToAnalysis, toCompareReports, carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, REFERS_BACK };

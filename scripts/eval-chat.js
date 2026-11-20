@@ -196,6 +196,11 @@ const CASES = [
     async (r) => r.count === await n(`SELECT count(*) n FROM player_latest WHERE age_group_label ~ '(^|[^0-9])14([^0-9]|$)' OR age_group = ${new Date().getFullYear() - 13}`)],
   ['players in U13/14', async (r) => r.count === await n("SELECT count(*) n FROM player_latest WHERE age_group_label = 'U13/14'")],
 
+  [['Who is the top - player among all who got feedback?', 'Why is he the top - player?'],
+    (r, s, { results }) => results[0].players.length === 1 && r.intent === 'comment_analysis' && r.players.length >= 1
+      && r.players[0].name === results[0].players[0].name && r.answer.includes(results[0].players[0].name)],
+  ['Who are the best 3 players with feedback reports?', (r) => r.players.length === 3 && /#\d+/.test(r.answer)],
+
   // ---- follow-up conversations ----
   [['Show the centre-backs', 'only the left-footed ones', 'how many of them are born in 2012?'],
     async (r, s) => r.intent === 'count' && r.count === await n("SELECT count(*) n FROM player_latest WHERE position ILIKE '%centre-back%' AND strong_foot = 'Left' AND age_group = 2012")],

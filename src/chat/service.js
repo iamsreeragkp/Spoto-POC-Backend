@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const chatPool = require('../db/chatPool');
 const { getLlm } = require('./llm');
 const { normalizePlan, SpecError, FIELDS } = require('./spec');
-const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, toCompareReports, explainToAnalysis, nameFiltersNeedAName, pickOption, ageBandFromWords, mergePositionAlternatives, dropTextRepeatingTags, rankAmongPlayers, addToPreviousSet, focusSetFromContext, scoutsOfPreviousPlayers, ensureFootFilter, showAllThenRank, reportTypeFromWords } = require('./followup');
+const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, toCompareReports, explainToAnalysis, nameFiltersNeedAName, pickOption, ageBandFromWords, explainPreviousRanking, mergePositionAlternatives, dropTextRepeatingTags, rankAmongPlayers, addToPreviousSet, focusSetFromContext, scoutsOfPreviousPlayers, ensureFootFilter, showAllThenRank, reportTypeFromWords } = require('./followup');
 const { foldText, foldSql, containsPattern, editDistance } = require('./fold');
 const { getMasker, aliasPlayer } = require('./privacy');
 const { getVocabulary, invalidateVocabulary } = require('./vocabulary');
@@ -337,6 +337,8 @@ async function resolvePlayers(names) {
   return { ids: [...new Set(ids)], missing, ambiguous, suggestions };
 }
 
+const JUDGE_MAX = 20; // players read when a ranking has to be judged from the written reports
+
 const REPORTS_SQL = `SELECT * FROM (
   SELECT r.id, r.player_id, p.name AS player_name, r.report_date, s.name AS scout_name, r.overall_score, r.overall_potential_score,
     r.recommendation, r.stage_of_growth, r.x_factor, r.physical, r.mental, r.technical, r.tactical, r.deadball, r.overall_comment,
@@ -444,7 +446,10 @@ async function ask(message, opts = {}) {
   let planned;
   const typo = await typoInMessage(message, vocab).catch((e) => { console.error('typo check failed:', e.message); return null; });
   const chosen = context.pending && pickOption(message, context.pending._pending.options);
-  if (chosen) { // "Which player do you mean by X?" answered: rerun that question with the chosen player
+  const why = !chosen && explainPreviousRanking(message, context);
+  if (why) {
+    planned = { route: 'data', spec: why, warnings: [], planCached: false };
+  } else if (chosen) { // "Which player do you mean by X?" answered: rerun that question with the chosen player
     const { _pending: pend, ...spec } = context.pending;
     planned = { route: 'data', spec: { ...spec, players: spec.players.map((p) => (p === pend.name ? chosen : p)) }, warnings: pend.warnings, planCached: false };
   } else if (typo) {
@@ -579,6 +584,19 @@ async function answerData(message, planned, opts, timings) {
     spec.limit = spec.intent === 'profile' ? 1 : Math.min(Math.max(spec.limit || 3, 2), 5);
   }
 
+  const SCORE_SORTS = ['overall_score', 'overall_potential_score'];
+  if (['list', 'comment_analysis'].includes(spec.intent) && spec.unit === 'player' && spec.sort && SCORE_SORTS.includes(spec.sort.field) && spec.limit && spec.limit <= 10) {
+    const probe = { ...spec, intent: 'list', limit: 1, filters: [...spec.filters, { field: spec.sort.field, op: 'not_null', value: '' }] };
+    const scored = Number((await execute(buildQueries(probe, near, meaningRes))).count);
+    if (scored === 0) { // e.g. feedback reports: coaches give no overall score
+      spec.judge = { top: spec.limit, field: spec.sort.field };
+      spec.intent = 'comment_analysis';
+      spec.limit = JUDGE_MAX;
+      spec.sort = null;
+      assumptions.push(`None of these players has ${spec.judge.field === 'overall_score' ? 'an overall score' : 'a potential score'}, so the ranking was judged from what the reports say.`);
+    }
+  }
+
   status('Searching the data…');
   const t1 = Date.now();
   const q = buildQueries(spec, near, meaningRes);
@@ -677,7 +695,7 @@ async function answerData(message, planned, opts, timings) {
 
     case 'comment_analysis': {
       if (!exec.count) return { ...out, players: [], answer: `No ${unitWord}s match.` };
-      const shortlist = rows.slice(0, 8);
+      const shortlist = rows.slice(0, spec.judge ? JUDGE_MAX : 8);
       if (!commentsAllowed()) {
         assumptions.push('"Best" was judged from overall score, potential and recommendation only (sending comments to the AI is disabled).');
         return { ...out, players: rows, answer: `Based on scores and scout recommendations, the strongest matches are: ${shortlist.map(playerLine).join('; ')}.` };
@@ -687,14 +705,27 @@ async function answerData(message, planned, opts, timings) {
       const names = await knownNames();
       const { rows: reps } = await chatPool.query(
         `SELECT r.id, r.player_id, p.name AS player_name, r.report_date, r.overall_score, r.overall_potential_score, r.recommendation, r.x_factor, r.physical, r.mental,
-           r.technical, r.tactical, r.deadball, r.overall_comment
+           r.technical, r.tactical, r.deadball, r.overall_comment, r.report_type, r.period_start, r.period_end,
+           r.score_physical, r.score_technical, r.score_tactical, r.score_mental, r.score_behavioral,
+           r.physical_comment, r.technical_comment, r.tactical_comment, r.mental_comment, r.behavioral_comment
          FROM reports r JOIN players p ON p.id = r.player_id WHERE r.id = ANY($1::int[])`, [ids]);
       const t0 = Date.now();
-      const r = await llmText({ system: JUDGE_SYSTEM, content: `Question: ${message}\n\nReports:\n${reps.map((x) => reportForLlm(x, names)).join('\n\n')}`, onToken: opts.onToken, maxTokens: 500 }, null);
+      const ex = spec.explain_previous;
+      const question = ex
+        ? `Earlier the administrator asked: ${ex.question}\nThe answer named: ${ex.players.join(', ') || '(no players)'}\nNow they ask: ${message}\nExplain from the reports why the named player(s) came out on top (if the reports do not support that, say so honestly and say who looks stronger).`
+        : spec.judge ? `${message}\n(No ${spec.judge.field === 'overall_score' ? 'overall' : 'potential'} scores are recorded for these players: judge from what the reports say, pick the best ${spec.judge.top}, and say that the ranking is based on the written reports.)`
+          : message;
+      const r = await llmText({ system: JUDGE_SYSTEM, content: `Question: ${question}\n\nReports:\n${reps.map((x) => reportForLlm(x, names)).join('\n\n')}`, onToken: opts.onToken, maxTokens: spec.judge ? 650 : 500 }, null);
       timings.answer_ms = Date.now() - t0;
-      assumptions.push(`Shortlisted ${reps.length} reports (${meaningRes ? 'best meaning matches' : spec.sort ? `top by ${spec.sort.field}` : 'top by score/recommendation'}) and sent only their redacted text to the AI.`);
+      assumptions.push(`${spec.judge ? `Read all ${reps.length} reports` : `Shortlisted ${reps.length} reports (${meaningRes ? 'best meaning matches' : spec.sort ? `top by ${spec.sort.field}` : 'top by score/recommendation'})`} and sent only their redacted text to the AI.`);
+      let players = rows;
+      if (spec.judge && r.text) { // the cards (and what "why?" refers to next) are the players the AI picked, in its order
+        const byReport = new Map(rows.map((x) => [x.match ? x.match.report_id : x.report_id, x]));
+        const picked = [...new Set([...r.text.matchAll(/#(\d+)/g)].map((m) => byReport.get(Number(m[1]))).filter(Boolean))];
+        if (picked.length) players = picked.slice(0, spec.judge.top);
+      }
       return {
-        ...out, players: rows, sources: reps.map((x) => x.id), sentToLlm: r.ok,
+        ...out, players, sources: reps.map((x) => x.id), sentToLlm: r.ok,
         answer: r.text || `The AI could not be reached; based on scores and recommendations the strongest matches are: ${shortlist.map(playerLine).join('; ')}.`,
       };
     }
