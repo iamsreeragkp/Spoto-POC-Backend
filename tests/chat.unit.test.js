@@ -468,3 +468,38 @@ test('editDistance: a swap of two neighbouring letters is one mistake', () => {
   assert.equal(editDistance('zzzzqq', 'kronborg') > 2, true);
   assert.equal(editDistance('same', 'same'), 0);
 });
+
+test('mergePositionAlternatives: two position conditions mean either position (strikers = No. 9 or Forward)', () => {
+  const { mergePositionAlternatives } = require('../src/chat/followup');
+  const plan = (filters) => ({ route: 'data', spec: { filters } });
+  const a = mergePositionAlternatives(plan([{ field: 'position', op: 'contains', value: 'No. 9' }, { field: 'position', op: 'contains', value: 'Forward' }, { field: 'age_group', op: 'eq', value: 2012 }])).spec.filters;
+  assert.deepEqual(a, [{ field: 'age_group', op: 'eq', value: 2012 }, { field: 'position', op: 'contains_any', value: ['No. 9', 'Forward'] }]);
+  const one = plan([{ field: 'position', op: 'contains', value: 'No. 9' }]);
+  assert.equal(mergePositionAlternatives(one), one);
+  const names = plan([{ field: 'player_name', op: 'contains', value: 'Anna' }, { field: 'player_name', op: 'contains', value: 'Testsen' }]);
+  assert.equal(mergePositionAlternatives(names), names, 'name parts stay AND');
+});
+
+test('reportTypeFromWords: "feedback"/"coach" or "assessment" in the question sets the report type when the plan lacks it', () => {
+  const { reportTypeFromWords } = require('../src/chat/followup');
+  const plan = (unit, filters = []) => ({ route: 'data', spec: { intent: 'count', unit, filters, assumptions: [] } });
+  assert.deepEqual(reportTypeFromWords('How many feedback reports are there?', plan('report')).spec.filters, [{ field: 'report_type', op: 'eq', value: 'feedback' }]);
+  assert.deepEqual(reportTypeFromWords('Which coach wrote the most?', plan('report')).spec.filters, [{ field: 'report_type', op: 'eq', value: 'feedback' }]);
+  assert.deepEqual(reportTypeFromWords('players with an assessment', plan('player')).spec.filters, [{ field: 'assessment_count', op: 'gt', value: 0 }]);
+  assert.deepEqual(reportTypeFromWords('Show me all the strikers assessed', plan('player')).spec.filters, [{ field: 'assessment_count', op: 'gt', value: 0 }]);
+  const both = plan('report');
+  assert.equal(reportTypeFromWords('compare the assessment and the feedback', both), both, 'both kinds named: no restriction');
+  const has = plan('report', [{ field: 'report_type', op: 'eq', value: 'feedback' }]);
+  assert.equal(reportTypeFromWords('feedback reports', has), has);
+  const none = plan('report');
+  assert.equal(reportTypeFromWords('how many reports per scout', none), none);
+});
+
+test('dropTextRepeatingTags: a keyword equal to a tag of the plan is dropped (tag "Speed" + keyword "speed")', () => {
+  const { dropTextRepeatingTags } = require('../src/chat/followup');
+  const plan = (text, logic = 'all') => ({ route: 'data', spec: { tags: [{ category: 'physical', any_of: ['Speed'] }], text, content_logic: logic } });
+  assert.deepEqual(dropTextRepeatingTags(plan([{ fields: ['comment'], any_of: ['speed'] }])).spec.text, []);
+  assert.deepEqual(dropTextRepeatingTags(plan([{ fields: ['comment'], any_of: ['speed', 'agility'] }])).spec.text, [{ fields: ['comment'], any_of: ['agility'] }]);
+  const alt = plan([{ fields: ['comment'], any_of: ['speed'] }], 'any');
+  assert.equal(dropTextRepeatingTags(alt), alt, 'alternatives (any) are left alone');
+});

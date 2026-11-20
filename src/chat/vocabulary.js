@@ -12,14 +12,15 @@ async function load() {
   const q = async (sql) => (await chatPool.query(sql)).rows;
   const list = async (col, from = 'player_latest') =>
     (await q(`SELECT ${col} AS v FROM ${from} WHERE ${col} IS NOT NULL GROUP BY 1 ORDER BY COUNT(*) DESC, 1 LIMIT 300`)).map((r) => r.v);
-  const [tagRows, positions, secondaryPositions, stageOfGrowth, strongFoot, recommendations, ageGroups, locations, scouts] = await Promise.all([
+  const [tagRows, positions, secondaryPositions, stageOfGrowth, strongFoot, recommendations, ageGroups, locations, scouts, reportTypes, ageGroupLabels, coaches] = await Promise.all([
     q('SELECT category, tag, COUNT(*)::int AS n FROM report_tags GROUP BY 1, 2 ORDER BY 1, 3 DESC'),
     list('position'), list('secondary_position'), list('stage_of_growth'), list('strong_foot'), list('recommendation', 'reports'), // all reports: a value used only in older reports is still a real value
-    list('age_group'), list('location'), list('name', 'scouts'),
+    list('age_group'), list('location'), list('name', 'scouts'), list('report_type', 'reports'), list('age_group_label', 'players'),
+    q("SELECT DISTINCT s.name AS v FROM reports r JOIN scouts s ON s.id = r.scout_id WHERE r.report_type = 'feedback' ORDER BY 1").then((rows) => rows.map((r) => r.v)),
   ]);
   const tags = Object.fromEntries(TAG_CATEGORIES.map((c) => [c, []]));
   for (const r of tagRows) tags[r.category].push({ tag: r.tag, n: r.n });
-  return { tags, positions, secondaryPositions, stageOfGrowth, strongFoot, recommendations, ageGroups, locations, scouts };
+  return { tags, positions, secondaryPositions, stageOfGrowth, strongFoot, recommendations, ageGroups, locations, scouts, reportTypes, ageGroupLabels, coaches };
 }
 
 async function getVocabulary() {

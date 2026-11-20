@@ -90,7 +90,10 @@ const reportSelect = `SELECT t.id, t.player_id, t.match_id, t.scout_id, to_char(
     t.stage_of_growth, t.height_now, t.height_now_mid, t.physical, t.mental, t.technical, t.tactical, t.deadball, t.x_factor,
     t.score_physical, t.score_mental, t.score_technical, t.score_tactical, t.score_deadball, t.score_x_factor,
     t.overall_score, t.overall_potential_score, t.overall_comment, t.recommendation, t.created_at, t.updated_at,
-    p.name AS player_name, p.age_group AS player_age_group, p.position AS player_position,
+    t.report_type, to_char(t.period_start, 'YYYY-MM-DD') AS period_start, to_char(t.period_end, 'YYYY-MM-DD') AS period_end,
+    t.competition_level, t.physical_comment, t.technical_comment, t.tactical_comment, t.mental_comment, t.behavioral_comment,
+    t.score_behavioral,
+    p.name AS player_name, p.age_group AS player_age_group, p.age_group_label AS player_age_group_label, p.position AS player_position,
     s.name AS scout_name, m.event, to_char(m.match_date, 'YYYY-MM-DD') AS match_date,
     ht.name AS home_team, at.name AS away_team
   FROM reports t
@@ -104,10 +107,13 @@ const reports = crudRouter({
   table: 'reports',
   columns: ['player_id', 'match_id', 'scout_id', 'report_date', 'stage_of_growth', 'height_now', 'physical', 'mental',
     'technical', 'tactical', 'deadball', 'x_factor', 'score_physical', 'score_mental', 'score_technical', 'score_tactical',
-    'score_deadball', 'score_x_factor', 'overall_score', 'overall_potential_score', 'overall_comment', 'recommendation'],
+    'score_deadball', 'score_x_factor', 'overall_score', 'overall_potential_score', 'overall_comment', 'recommendation',
+    'report_type', 'period_start', 'period_end', 'competition_level', 'physical_comment', 'technical_comment', 'tactical_comment',
+    'mental_comment', 'behavioral_comment', 'score_behavioral'],
   required: ['player_id'],
   select: reportSelect,
   filters: {
+    type: { sql: 't.report_type' },              // assessment | feedback (no type = both)
     playerId: { sql: 't.player_id' },
     player: { sql: 'p.name', op: 'ilike' },
     scoutId: { sql: 't.scout_id' },
@@ -117,6 +123,7 @@ const reports = crudRouter({
     stageOfGrowth: { sql: 't.stage_of_growth' },
     position: { sql: 'p.position', op: 'ilike' },
     ageGroup: { sql: 'p.age_group' },
+    ageGroupLabel: { sql: 'p.age_group_label', op: 'ilike' },
     overallScore: { sql: 't.overall_score' },
     minOverallScore: { sql: 't.overall_score', op: 'gte' },
     maxOverallScore: { sql: 't.overall_score', op: 'lte' },
@@ -124,10 +131,11 @@ const reports = crudRouter({
     dateFrom: { sql: 't.report_date', op: 'gte' },
     dateTo: { sql: 't.report_date', op: 'lte' },
   },
-  search: ['p.name', 's.name', 't.overall_comment', 't.recommendation', 'm.event', 't.physical', 't.mental', 't.technical', 't.tactical', 't.x_factor'],
+  search: ['p.name', 's.name', 't.overall_comment', 't.recommendation', 'm.event', 't.physical', 't.mental', 't.technical', 't.tactical', 't.x_factor',
+    't.physical_comment', 't.technical_comment', 't.tactical_comment', 't.mental_comment', 't.behavioral_comment'],
   sort: {
     id: 't.id', date: 't.report_date', player: 'p.name', scout: 's.name',
-    overallScore: 't.overall_score', potentialScore: 't.overall_potential_score',
+    overallScore: 't.overall_score', potentialScore: 't.overall_potential_score', type: 't.report_type',
   },
   defaultSort: 't.report_date DESC NULLS LAST, t.id DESC',
 });
@@ -153,6 +161,8 @@ const stats = require('express').Router();
 stats.get('/', wrap(async (req, res) => {
   const q = async (sql) => (await pool.query(sql)).rows;
   const [counts] = await q(`SELECT (SELECT COUNT(*)::int FROM players) AS players, (SELECT COUNT(*)::int FROM reports) AS reports,
+    (SELECT COUNT(*)::int FROM reports WHERE report_type = 'assessment') AS assessment_reports,
+    (SELECT COUNT(*)::int FROM reports WHERE report_type = 'feedback') AS feedback_reports,
     (SELECT COUNT(*)::int FROM matches) AS matches, (SELECT COUNT(*)::int FROM teams) AS teams, (SELECT COUNT(*)::int FROM scouts) AS scouts`);
   res.json({
     data: {

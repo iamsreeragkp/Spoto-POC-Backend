@@ -18,8 +18,10 @@ ALTER TABLE reports
   DROP COLUMN IF EXISTS search_tsv,
   ADD COLUMN IF NOT EXISTS tsv_x tsvector
   GENERATED ALWAYS AS (to_tsvector('english'::regconfig, coalesce(x_factor, ''))) STORED,
-  ADD COLUMN IF NOT EXISTS tsv_c tsvector
-  GENERATED ALWAYS AS (to_tsvector('english'::regconfig, coalesce(overall_comment, ''))) STORED,
+  ADD COLUMN IF NOT EXISTS tsv_c tsvector   -- overall + per-category comments (behavioral_comment etc., see reports_v3.sql)
+  GENERATED ALWAYS AS (to_tsvector('english'::regconfig, coalesce(overall_comment, '') || ' ' || coalesce(physical_comment, '') || ' ' ||
+    coalesce(technical_comment, '') || ' ' || coalesce(tactical_comment, '') || ' ' || coalesce(mental_comment, '') || ' ' ||
+    coalesce(behavioral_comment, ''))) STORED,
   ADD COLUMN IF NOT EXISTS tsv_t tsvector
   GENERATED ALWAYS AS (to_tsvector('english'::regconfig,
     coalesce(physical, '') || ' , ' || coalesce(mental, '') || ' , ' || coalesce(technical, '') || ' , ' ||
@@ -55,7 +57,7 @@ END $$;
 DROP VIEW IF EXISTS player_latest_source, player_text_source;
 CREATE VIEW player_latest_source AS
 SELECT DISTINCT ON (p.id)
-  p.id AS player_id, p.name AS player_name, p.gender, p.date_of_birth, p.year_of_birth, p.age_group,
+  p.id AS player_id, p.name AS player_name, p.gender, p.date_of_birth, p.year_of_birth, p.age_group, p.age_group_label,
   p.jersey_number, p.location, p.position, p.secondary_position, p.strong_foot,
   p.team_id, tm.name AS team_name, p.mother_height_mid, p.father_height_mid,
   r.id AS report_id, r.report_date,
@@ -63,18 +65,25 @@ SELECT DISTINCT ON (p.id)
   r.stage_of_growth, r.height_now, r.height_now_mid, r.x_factor,
   r.score_physical, r.score_mental, r.score_technical, r.score_tactical, r.score_deadball, r.score_x_factor,
   r.overall_score, r.overall_potential_score, r.recommendation, r.scout_id, s.name AS scout_name,
+  r.report_type, r.score_behavioral, r.competition_level, r.period_start, r.period_end,
   coalesce(st.report_count, 0) AS report_count, st.first_report_date, st.first_overall_score,
-  CASE WHEN st.report_count > 1 THEN r.overall_score - st.first_overall_score END AS score_change
+  CASE WHEN st.assessment_count > 1 AND r.report_type = 'assessment' THEN r.overall_score - st.first_overall_score END AS score_change,
+  coalesce(st.assessment_count, 0) AS assessment_count, coalesce(st.feedback_count, 0) AS feedback_count, st.latest_feedback_date
 FROM players p
 LEFT JOIN teams tm ON tm.id = p.team_id
 LEFT JOIN reports r ON r.player_id = p.id
 LEFT JOIN scouts s ON s.id = r.scout_id
 LEFT JOIN (
   SELECT player_id, count(*)::int AS report_count, min(report_date) AS first_report_date,
-         (array_agg(overall_score ORDER BY report_date ASC NULLS LAST, id ASC) FILTER (WHERE overall_score IS NOT NULL))[1] AS first_overall_score
+         count(*) FILTER (WHERE report_type = 'assessment')::int AS assessment_count,
+         count(*) FILTER (WHERE report_type = 'feedback')::int AS feedback_count,
+         max(report_date) FILTER (WHERE report_type = 'feedback') AS latest_feedback_date,
+         (array_agg(overall_score ORDER BY report_date ASC NULLS LAST, id ASC)
+            FILTER (WHERE overall_score IS NOT NULL AND report_type = 'assessment'))[1] AS first_overall_score
   FROM reports GROUP BY player_id
 ) st ON st.player_id = p.id
-ORDER BY p.id, r.report_date DESC NULLS LAST, r.id DESC;
+-- one row per player: the latest ASSESSMENT (scores, recommendation); players with feedback reports only get their latest feedback
+ORDER BY p.id, (r.report_type = 'assessment') DESC NULLS LAST, r.report_date DESC NULLS LAST, r.id DESC;
 
 -- Full-text vectors per player, kept in a separate table so player_latest stays narrow (and cached):
 -- tsv_* = the latest report, tsv_all_* = all of the player's reports together.
@@ -83,7 +92,7 @@ SELECT p.id AS player_id, lr.tsv_x, lr.tsv_c, lr.tsv_t, st.tsv_all_x, st.tsv_all
 FROM players p
 LEFT JOIN LATERAL (
   SELECT r.tsv_x, r.tsv_c, r.tsv_t FROM reports r WHERE r.player_id = p.id
-  ORDER BY r.report_date DESC NULLS LAST, r.id DESC LIMIT 1
+  ORDER BY (r.report_type = 'assessment') DESC, r.report_date DESC NULLS LAST, r.id DESC LIMIT 1
 ) lr ON true
 LEFT JOIN (
   SELECT player_id, tsvector_agg(tsv_x) AS tsv_all_x, tsvector_agg(tsv_c) AS tsv_all_c, tsvector_agg(tsv_t) AS tsv_all_t
@@ -152,6 +161,13 @@ BEGIN
   INSERT INTO player_text SELECT * FROM player_text_source;
 END $$ LANGUAGE plpgsql;
 
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM schema_flags WHERE name = 'rebuild_player_latest') THEN
+    PERFORM rebuild_player_latest();
+    DELETE FROM schema_flags WHERE name = 'rebuild_player_latest';
+  END IF;
+END $$;
+
 CREATE OR REPLACE FUNCTION trg_reports_player_latest() RETURNS trigger AS $$
 BEGIN
   IF TG_OP IN ('INSERT', 'UPDATE') THEN PERFORM refresh_player_latest(NEW.player_id); END IF;
@@ -192,13 +208,14 @@ CREATE TRIGGER trg_players_truncate AFTER TRUNCATE ON players FOR EACH STATEMENT
 
 -- Report-level facts (one row per report) for "how many reports per scout / per month" style questions
 CREATE OR REPLACE VIEW report_facts AS
-SELECT r.id AS report_id, r.player_id, p.name AS player_name, p.gender, p.date_of_birth, p.year_of_birth, p.age_group,
+SELECT r.id AS report_id, r.player_id, p.name AS player_name, p.gender, p.date_of_birth, p.year_of_birth, p.age_group, p.age_group_label,
   p.jersey_number, p.location, p.position, p.secondary_position, p.strong_foot,
   p.team_id, tm.name AS team_name, p.mother_height_mid, p.father_height_mid,
   r.report_date, extract(year FROM r.report_date)::int AS report_year, to_char(r.report_date, 'YYYY-MM') AS report_month,
   r.stage_of_growth, r.height_now_mid, r.x_factor,
   r.score_physical, r.score_mental, r.score_technical, r.score_tactical, r.score_deadball, r.score_x_factor,
   r.overall_score, r.overall_potential_score, r.recommendation, r.scout_id, s.name AS scout_name,
+  r.report_type, r.period_start, r.period_end, r.competition_level, r.score_behavioral,
   r.tsv_x, r.tsv_c, r.tsv_t
 FROM reports r
 LEFT JOIN players p ON p.id = r.player_id   -- player_id is NOT NULL + FK, so LEFT = INNER; LEFT lets Postgres drop the join when unused
@@ -265,7 +282,7 @@ BEGIN
   DELETE FROM _chunk_src;
   INSERT INTO _chunk_src
     SELECT f.field, s.ord, s.chunk, chunk_hash('text', NULL, s.chunk)
-    FROM (VALUES ('x_factor', NEW.x_factor), ('comment', NEW.overall_comment)) AS f(field, txt), LATERAL split_chunks(f.txt) s;
+    FROM (VALUES ('x_factor', NEW.x_factor), ('comment', concat_ws(E'\n', NEW.overall_comment, NEW.physical_comment, NEW.technical_comment, NEW.tactical_comment, NEW.mental_comment, NEW.behavioral_comment))) AS f(field, txt), LATERAL split_chunks(f.txt) s;
   INSERT INTO text_chunks(kind, content, content_hash)
     SELECT DISTINCT ON (h) 'text', chunk, h FROM _chunk_src ORDER BY h ON CONFLICT (content_hash) DO NOTHING;
   INSERT INTO report_chunks(report_id, player_id, field, ord, chunk_id)
@@ -273,7 +290,8 @@ BEGIN
   RETURN NULL;
 END $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS trg_reports_chunks ON reports;
-CREATE TRIGGER trg_reports_chunks AFTER INSERT OR UPDATE OF x_factor, overall_comment, player_id ON reports
+CREATE TRIGGER trg_reports_chunks AFTER INSERT OR UPDATE OF x_factor, overall_comment, physical_comment, technical_comment, tactical_comment,
+  mental_comment, behavioral_comment, player_id ON reports
   FOR EACH ROW EXECUTE FUNCTION sync_report_chunks();
 
 CREATE OR REPLACE FUNCTION rebuild_report_chunks(min_id INTEGER DEFAULT 0, max_id INTEGER DEFAULT 2147483647) RETURNS void AS $$
@@ -283,7 +301,7 @@ BEGIN
   CREATE TEMP TABLE _bulk_chunk_src AS
     SELECT r.id AS report_id, r.player_id, f.field, s.ord, s.chunk, chunk_hash('text', NULL, s.chunk) AS h
     FROM reports r,
-         LATERAL (VALUES ('x_factor', r.x_factor), ('comment', r.overall_comment)) AS f(field, txt),
+         LATERAL (VALUES ('x_factor', r.x_factor), ('comment', concat_ws(E'\n', r.overall_comment, r.physical_comment, r.technical_comment, r.tactical_comment, r.mental_comment, r.behavioral_comment))) AS f(field, txt),
          LATERAL split_chunks(f.txt) s
     WHERE r.id BETWEEN min_id AND max_id;
   INSERT INTO text_chunks(kind, content, content_hash)

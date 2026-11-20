@@ -223,4 +223,55 @@ function showAllThenRank(message, result) {
     assumptions: [...(s.assumptions || []), `Listed all matching players ranked by score, and picked out the best ${n}.`].slice(0, 8) } };
 }
 
-module.exports = { showAllThenRank, ensureFootFilter, scoutsOfPreviousPlayers, focusSetFromContext, rankAmongPlayers, addToPreviousSet, nameFiltersNeedAName, explainToAnalysis, toCompareReports, carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, REFERS_BACK };
+// "How many feedback reports ...", "which coach ...", "show the assessments of ...": the kind of report the question names is applied
+// when the plan forgot it. Players: has at least one report of that kind; reports: report_type. Both kinds named = no restriction.
+const FEEDBACK_WORDS = /\bfeedbacks?\b|\bcoach(?:es|ed)?\b/i;
+const ASSESSMENT_WORDS = /\bassess(?:ments?|ed)\b/i; // "assessment(s)", "strikers assessed"
+function reportTypeFromWords(message, result) {
+  const s = result && result.route === 'data' && result.spec;
+  if (!s || ['profile', 'compare'].includes(s.intent)) return result;
+  const fb = FEEDBACK_WORDS.test(message), as = ASSESSMENT_WORDS.test(message);
+  if (fb === as) return result;
+  const type = fb ? 'feedback' : 'assessment';
+  const filters = s.filters || [];
+  if (filters.some((f) => ['report_type', 'feedback_count', 'assessment_count'].includes(f.field))) return result;
+  const add = s.unit === 'report' ? { field: 'report_type', op: 'eq', value: type } : { field: `${type}_count`, op: 'gt', value: 0 };
+  return { ...result, spec: { ...s, filters: [...filters, add],
+    assumptions: [...(s.assumptions || []), `Only ${type} reports, as your question says.`].slice(0, 8) } };
+}
+
+// A player has one position, so two position conditions ("No. 9" and "Forward" for strikers) mean EITHER of them.
+function mergePositionAlternatives(result) {
+  const s = result && result.route === 'data' && result.spec;
+  if (!s) return result;
+  let filters = [...(s.filters || [])];
+  let changed = false;
+  for (const field of ['position', 'secondary_position']) {
+    const same = filters.filter((f) => f.field === field && ['contains', 'eq'].includes(f.op));
+    if (same.length < 2) continue;
+    filters = filters.filter((f) => !same.includes(f)).concat({ field, op: 'contains_any', value: [...new Set(same.map((f) => String(f.value)))] });
+    changed = true;
+  }
+  // both kinds of report named as two conditions ("assessment" AND "feedback") = no restriction on the kind
+  const kinds = new Set(filters.filter((f) => f.field === 'report_type' && f.op === 'eq').map((f) => String(f.value)));
+  if (kinds.size > 1) { filters = filters.filter((f) => f.field !== 'report_type'); changed = true; }
+  return changed ? { ...result, spec: { ...s, filters } } : result;
+}
+
+// "players with speed": the tag "Speed" already says it; a keyword search for the same word in the comments, required as well,
+// only removes players (and widens the search to every report). Keywords equal to a tag of the plan are dropped.
+const normWords = (x) => String(x).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+function dropTextRepeatingTags(result) {
+  const s = result && result.route === 'data' && result.spec;
+  if (!s || !(s.tags || []).length || !(s.text || []).length || s.content_logic === 'any') return result;
+  const tagWords = new Set((s.tags || []).flatMap((t) => t.any_of || []).map(normWords));
+  let changed = false;
+  const text = (s.text || []).map((t) => {
+    const keep = (t.any_of || []).filter((term) => !tagWords.has(normWords(term)));
+    if (keep.length !== (t.any_of || []).length) changed = true;
+    return { ...t, any_of: keep };
+  }).filter((t) => t.any_of.length);
+  return changed ? { ...result, spec: { ...s, text } } : result;
+}
+
+module.exports = { dropTextRepeatingTags, mergePositionAlternatives, reportTypeFromWords, showAllThenRank, ensureFootFilter, scoutsOfPreviousPlayers, focusSetFromContext, rankAmongPlayers, addToPreviousSet, nameFiltersNeedAName, explainToAnalysis, toCompareReports, carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, REFERS_BACK };

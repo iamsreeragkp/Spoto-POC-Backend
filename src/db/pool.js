@@ -2,7 +2,8 @@ require('dotenv').config();
 const { Pool, types } = require('pg');
 
 // Return DATE columns as plain 'YYYY-MM-DD' strings (no JS Date / timezone shift)
-types.setTypeParser(1082, (v) => v);
+types.setTypeParser(1082, (v) => v); // DATE as 'YYYY-MM-DD'
+types.setTypeParser(1700, (v) => (v == null ? null : parseFloat(v))); // NUMERIC (decimal scores, averages) as numbers
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/sporto_poc',

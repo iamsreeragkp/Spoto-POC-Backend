@@ -14,10 +14,10 @@ const text = (s, t, field) => has(s.text, (x) => (!field || x.fields.includes(fi
 const content = (s) => s.tags.length + s.text.length + (s.meaning ? 1 : 0) > 0;
 
 // real names are read from the database when the evaluation runs, so no personal data is stored in this file
-const NAME = { A: '', B: '', SCOUT: '', FIRST: '', A1: '', B1: '', BL: '', MOST: '', ONE: '', N: '', BT: '' };
+const NAME = { A: '', B: '', SCOUT: '', FIRST: '', A1: '', B1: '', BL: '', MOST: '', ONE: '', N: '', BT: '', FB: '' };
 const { foldText, foldSql } = require('../src/chat/fold');
 const q = (v) => String(v).replace(/'/g, "''");
-const fill = (t) => t.replace(/\{A\}/g, NAME.A).replace(/\{B\}/g, NAME.B).replace(/\{SCOUT\}/g, NAME.SCOUT).replace(/\{FIRST\}/g, NAME.FIRST).replace(/\{BT\}/g, NAME.BT).replace(/\{N\}/g, NAME.N).replace(/\{MOST\}/g, NAME.MOST).replace(/\{ONE\}/g, NAME.ONE).replace(/\{A1\}/g, NAME.A1).replace(/\{B1\}/g, NAME.B1).replace(/\{BL\}/g, NAME.BL).replace(/\{SCOUTFLAT\}/g, foldText(NAME.SCOUT).replace(/\b\w/g, (c) => c.toUpperCase()));
+const fill = (t) => t.replace(/\{A\}/g, NAME.A).replace(/\{B\}/g, NAME.B).replace(/\{SCOUT\}/g, NAME.SCOUT).replace(/\{FIRST\}/g, NAME.FIRST).replace(/\{FB\}/g, NAME.FB).replace(/\{BT\}/g, NAME.BT).replace(/\{N\}/g, NAME.N).replace(/\{MOST\}/g, NAME.MOST).replace(/\{ONE\}/g, NAME.ONE).replace(/\{A1\}/g, NAME.A1).replace(/\{B1\}/g, NAME.B1).replace(/\{BL\}/g, NAME.BL).replace(/\{SCOUTFLAT\}/g, foldText(NAME.SCOUT).replace(/\b\w/g, (c) => c.toUpperCase()));
 const n = async (sql) => Number((await pool.query(sql)).rows[0].n);
 const SPEED = "EXISTS (SELECT 1 FROM report_tags rt WHERE rt.report_id = r.id AND rt.tag = 'Speed')";
 // players matching a report-level condition, using the same scope the planner chose (latest report or any report)
@@ -171,6 +171,27 @@ const CASES = [
   ['Show me all the reports for {B1} {BT}',
     (r) => r.route === 'clarify' && foldText(r.answer).includes(foldText(NAME.BL)) && /did you mean/i.test(r.answer)],
 
+  // ---- assessment + feedback reports together ----
+  ['How many reports are there?', async (r) => r.count === await n('SELECT count(*) n FROM reports')],
+  ['How many feedback reports are there?', async (r) => r.count === await n("SELECT count(*) n FROM reports WHERE report_type = 'feedback'")],
+  ['How many assessment reports are there?', async (r) => r.count === await n("SELECT count(*) n FROM reports WHERE report_type = 'assessment'")],
+  ['How many feedback reports did each coach write?',
+    async (r) => r.intent === 'group_count' && r.groups.reduce((a, g) => a + Number(g.count), 0) === await n("SELECT count(*) n FROM reports WHERE report_type = 'feedback'")
+      && r.groups.length === await n("SELECT count(DISTINCT scout_id) n FROM reports WHERE report_type = 'feedback'")],
+  ['Which players have feedback reports?', async (r) => r.count === await n("SELECT count(DISTINCT player_id) n FROM reports WHERE report_type = 'feedback'")],
+  ['Show me the feedback for {FB}',
+    async (r) => r.count === await n(`SELECT count(*) n FROM reports r JOIN players p ON p.id = r.player_id WHERE r.report_type = 'feedback' AND p.name = '${q(NAME.FB)}'`)],
+  ['Tell me about {FB}', (r) => r.intent === 'profile' && r.players.length === 1 && /feedback/.test(r.answer) && /coach/.test(r.answer)],
+  ['Compare {FB} and {A}', (r) => r.intent === 'compare' && r.count === 2],
+  ['Where is the word rondo mentioned?',
+    async (r) => r.count === await n("SELECT count(*) n FROM reports WHERE concat_ws(' ', overall_comment, physical_comment, technical_comment, tactical_comment, mental_comment, behavioral_comment, x_factor) ~* 'rondo'")
+      || r.count === await n("SELECT count(DISTINCT player_id) n FROM reports WHERE concat_ws(' ', overall_comment, physical_comment, technical_comment, tactical_comment, mental_comment, behavioral_comment, x_factor) ~* 'rondo'")],
+  ['Show me all the strikers', async (r) => r.count === await n("SELECT count(*) n FROM player_latest WHERE position = 'No. 9' OR position = 'Forward'")],
+  ['What is the average behavioral score?',
+    async (r) => r.intent === 'aggregate' && Math.abs(Number(r.aggregate.value) - await n('SELECT avg(score_behavioral) n FROM reports')) < 0.01],
+  [['How many feedback reports did each coach write?', 'and how many assessment reports did each scout write?'],
+    async (r) => r.intent === 'group_count' && r.groups.reduce((a, g) => a + Number(g.count), 0) === await n("SELECT count(*) n FROM reports WHERE report_type = 'assessment' AND scout_id IS NOT NULL")],
+
   // ---- follow-up conversations ----
   [['Show the centre-backs', 'only the left-footed ones', 'how many of them are born in 2012?'],
     async (r, s) => r.intent === 'count' && r.count === await n("SELECT count(*) n FROM player_latest WHERE position ILIKE '%centre-back%' AND strong_foot = 'Left' AND age_group = 2012")],
@@ -220,6 +241,7 @@ const pct = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s.lengt
   NAME.A = two[0].name;
   NAME.B = two[1].name;
   NAME.A1 = two[0].name.split(' ')[0];
+  NAME.FB = (await one('SELECT player_name FROM player_latest WHERE feedback_count > 0 AND assessment_count = 0 ORDER BY player_name LIMIT 1')).player_name || '';
   NAME.MOST = (await one('SELECT player_name FROM player_latest ORDER BY report_count DESC, player_name LIMIT 1')).player_name;
   NAME.ONE = (await one('SELECT player_name FROM player_latest WHERE report_count = 1 ORDER BY player_name LIMIT 1')).player_name;
   const bw = two[1].name.split(' ').filter(Boolean);

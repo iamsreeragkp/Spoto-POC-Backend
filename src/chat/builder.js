@@ -12,9 +12,10 @@ const GROUP_LIMIT = 200;
 const PLAYER_COLS = `pl.player_id, pl.report_id, pl.player_name AS name, pl.position, pl.secondary_position, pl.team_name,
   pl.location, pl.age_group, pl.jersey_number, pl.strong_foot, pl.stage_of_growth, pl.overall_score,
   pl.overall_potential_score, pl.recommendation, pl.scout_name, pl.father_height_mid, pl.mother_height_mid,
-  pl.x_factor, pl.report_date, pl.report_count, pl.score_change`;
+  pl.x_factor, pl.report_date, pl.report_count, pl.score_change, pl.report_type, pl.age_group_label`;
 const REPORT_COLS = `pl.report_id, pl.player_id, pl.player_name AS name, pl.position, pl.team_name, pl.location, pl.age_group,
-  pl.report_date, pl.scout_name, pl.stage_of_growth, pl.overall_score, pl.overall_potential_score, pl.recommendation, pl.x_factor`;
+  pl.report_date, pl.scout_name, pl.stage_of_growth, pl.overall_score, pl.overall_potential_score, pl.recommendation, pl.x_factor,
+  pl.report_type, pl.period_start, pl.period_end, pl.age_group_label`;
 
 /** Which column links a content match to the row: the row's report (latest / report unit) or the player (all reports). */
 const { foldText, foldSql, containsPattern } = require('./fold');
@@ -45,6 +46,7 @@ function buildWhere(spec, near, meaningRes, { exclude } = {}) {
     if (f.op === 'is_null') return parts.push(`${col} IS NULL`);
     if (f.op === 'not_null') return parts.push(`${col} IS NOT NULL`);
     if (def.kind === 'text') {
+      if (f.op === 'contains_any') return parts.push(`(${[].concat(f.value).map((v) => `${col} ILIKE ${add(`%${v}%`)}`).join(' OR ')})`); // either position
       if (FOLDED_FIELDS.has(f.field) && f.op === 'contains') return parts.push(`${foldSql(col)} LIKE ${add(containsPattern(f.value))}`);
       if (FOLDED_FIELDS.has(f.field) && f.op === 'eq') {
         // "reports for Kronborg": the AI asks for an exact name; if no player/scout has exactly that name, a name containing it matches

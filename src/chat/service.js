@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const chatPool = require('../db/chatPool');
 const { getLlm } = require('./llm');
 const { normalizePlan, SpecError, FIELDS } = require('./spec');
-const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, toCompareReports, explainToAnalysis, nameFiltersNeedAName, rankAmongPlayers, addToPreviousSet, focusSetFromContext, scoutsOfPreviousPlayers, ensureFootFilter, showAllThenRank } = require('./followup');
+const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, toCompareReports, explainToAnalysis, nameFiltersNeedAName, mergePositionAlternatives, dropTextRepeatingTags, rankAmongPlayers, addToPreviousSet, focusSetFromContext, scoutsOfPreviousPlayers, ensureFootFilter, showAllThenRank, reportTypeFromWords } = require('./followup');
 const { foldText, foldSql, containsPattern, editDistance } = require('./fold');
 const { getMasker, aliasPlayer } = require('./privacy');
 const { getVocabulary, invalidateVocabulary } = require('./vocabulary');
@@ -59,7 +59,7 @@ const OP_TEXT = { eq: '=', neq: '≠', gt: '>', gte: '≥', lt: '<', lte: '≤',
 function describe(spec, near, meaningRes) {
   const out = [];
   if (spec.unit === 'report') out.push('counting individual reports');
-  out.push(...spec.filters.map((f) => (['is_null', 'not_null'].includes(f.op) ? `${f.field} ${OP_TEXT[f.op]}` : `${f.field} ${OP_TEXT[f.op]} ${f.value}${f.field === 'recommendation' && f.op === 'eq' && spec.unit === 'player' ? (spec.recommendation_scope === 'latest' ? ' (in the latest report)' : ' (in any report)') : ''}`)));
+  out.push(...spec.filters.map((f) => (['is_null', 'not_null'].includes(f.op) ? `${f.field} ${OP_TEXT[f.op]}` : f.op === 'contains_any' ? `${f.field} contains ${[].concat(f.value).join(' or ')}` : `${f.field} ${OP_TEXT[f.op]} ${f.value}${f.field === 'recommendation' && f.op === 'eq' && spec.unit === 'player' ? (spec.recommendation_scope === 'latest' ? ' (in the latest report)' : ' (in any report)') : ''}`)));
   if (spec.players.length) out.push(`players: ${spec.players.join(', ')}`);
   spec.tags.forEach((t) => out.push(`${t.category} tag is any of: ${t.any_of.join(' / ')}`));
   spec.text.forEach((t) => {
@@ -112,7 +112,8 @@ const playerLine = (p) => {
   const mins = p.drive_minutes != null ? ` (${Math.round(p.drive_minutes)} min)` : '';
   return `${p.name}${bits ? ` (${bits})` : ''}${score}${mins}`;
 };
-const reportLine = (r) => `#${r.report_id} ${r.report_date || 'undated'} – ${r.name}${r.scout_name ? `, by ${r.scout_name}` : ''}${r.overall_score != null ? `, score ${r.overall_score}` : ''}`;
+const kindOf = (r) => (r.report_type === 'feedback' ? `feedback${r.scout_name ? ` by coach ${r.scout_name}` : ''}` : `assessment${r.scout_name ? ` by ${r.scout_name}` : ''}`);
+const reportLine = (r) => `#${r.report_id} ${r.report_date || 'undated'} – ${r.name} (${kindOf(r)})${r.overall_score != null ? `, score ${r.overall_score}` : ''}`;
 const round = (v) => (v == null ? '–' : Math.abs(v) >= 100 ? v.toFixed(0) : Number(v.toFixed(2)).toString());
 
 // ---- planning ----
@@ -143,8 +144,8 @@ async function plan(message, context, vocab, timings) {
   timings.llm_ms = Date.now() - t0;
   const masker = getLlm().name === 'openai' ? await getMasker() : null;
   const maskFn = masker ? (t) => masker.mask(t, { allowParts: true }) : null; // names are only masked when text goes to the AI provider
-  let result = defaultRecommendationScope(message, explainToAnalysis(message, rankAmongPlayers(message, toCompareReports(message, collapseNameFilters(defaultTextScope(message, carryFollowUp(message, context.lastSpec, focusSetFromContext(message, context, nameFiltersNeedAName(message, mergeAdjacentNames(message, normalizePlan(raw, vocab)), context.lastSpec, maskFn, vocab)))), context.lastSpec)))));
-  result = showAllThenRank(message, ensureFootFilter(message, result, vocab));
+  let result = defaultRecommendationScope(message, explainToAnalysis(message, rankAmongPlayers(message, toCompareReports(message, collapseNameFilters(defaultTextScope(message, carryFollowUp(message, context.lastSpec, focusSetFromContext(message, context, nameFiltersNeedAName(message, mergeAdjacentNames(message, dropTextRepeatingTags(mergePositionAlternatives(normalizePlan(raw, vocab)))), context.lastSpec, maskFn, vocab)))), context.lastSpec)))));
+  result = reportTypeFromWords(message, showAllThenRank(message, ensureFootFilter(message, result, vocab)));
   // "Why not <player>?": add that player to the previous list and rank everyone together
   const mentioned = masker ? (masker.mask(message, { allowParts: true }).match(/\u27E6P\d+\u27E7/g) || []).map((t) => masker.unmask(t)) : [];
   const add = addToPreviousSet(message, context, mentioned);
@@ -339,6 +340,8 @@ async function resolvePlayers(names) {
 const REPORTS_SQL = `SELECT * FROM (
   SELECT r.id, r.player_id, p.name AS player_name, r.report_date, s.name AS scout_name, r.overall_score, r.overall_potential_score,
     r.recommendation, r.stage_of_growth, r.x_factor, r.physical, r.mental, r.technical, r.tactical, r.deadball, r.overall_comment,
+    r.report_type, r.period_start, r.period_end, r.score_physical, r.score_technical, r.score_tactical, r.score_mental, r.score_behavioral,
+    r.physical_comment, r.technical_comment, r.tactical_comment, r.mental_comment, r.behavioral_comment,
     row_number() OVER (PARTITION BY r.player_id ORDER BY r.report_date DESC NULLS LAST, r.id DESC) AS rn
   FROM reports r JOIN players p ON p.id = r.player_id LEFT JOIN scouts s ON s.id = r.scout_id
   WHERE r.player_id = ANY($1::int[])) x WHERE rn <= $2 ORDER BY player_id, rn`;
@@ -351,10 +354,16 @@ function reportForLlm(r, names) {
   // the report's own player is aliased (not "[name]") so the AI knows who is meant and quotes read naturally once translated back
   const own = (t) => redactComment(aliasPlayer(t, r.player_name, r.player_id), names);
   const scores = r.overall_score != null ? `, overall score ${r.overall_score}, ${r.overall_potential_score != null ? `potential ${r.overall_potential_score}` : 'potential not recorded'}` : '';
-  return [`#${r.id} (${r.player_name}, ${r.report_date || 'undated'}${scores}${r.recommendation ? `, “${r.recommendation}”` : ''})`,
+  const fb = r.report_type === 'feedback';
+  const kind = fb ? `feedback report by a coach${r.period_start || r.period_end ? ` for ${r.period_start || '?'} – ${r.period_end || '?'}` : ''}` : 'assessment report';
+  const cats = [['Physical', r.physical_comment, r.score_physical], ['Technical', r.technical_comment, r.score_technical], ['Tactical', r.tactical_comment, r.score_tactical],
+    [fb ? 'Psychological' : 'Mental', r.mental_comment, r.score_mental], ['Behavioral', r.behavioral_comment, r.score_behavioral]]
+    .filter(([, c, sc]) => c || sc != null).map(([label, c, sc]) => `${label}${sc != null ? ` (score ${sc})` : ''}: ${c ? own(c).slice(0, 700) : '–'}`);
+  return [`#${r.id} (${r.player_name}, ${kind}, ${r.report_date || 'undated'}${scores}${r.recommendation ? `, “${r.recommendation}”` : ''})`,
     r.x_factor ? `X-factor: ${own(r.x_factor)}` : null,
     tags ? `Tags: ${tags}` : null,
-    r.overall_comment ? `Comment: ${own(r.overall_comment).slice(0, 1800)}` : null].filter(Boolean).join('\n');
+    r.overall_comment ? `Comment: ${own(r.overall_comment).slice(0, 1800)}` : null,
+    ...cats].filter(Boolean).join('\n');
 }
 
 /** "Compare the reports of this player": a table of the player's reports (oldest first) plus, if allowed, an AI comparison. */
@@ -367,7 +376,7 @@ async function compareOwnReports(playerId, rows, out, { message, opts, status, t
   if (!p) return { ...out, players: [], count: 0, answer: 'No players match.' };
   const players = [{ ...p, name: p.player_name }];
   const asc = [...reps].sort((a, b) => String(a.report_date || '').localeCompare(String(b.report_date || '')) || a.id - b.id);
-  const line = (r) => `• #${r.id} ${r.report_date || 'undated'} – overall ${r.overall_score ?? '–'}, potential ${r.overall_potential_score ?? '–'}${r.recommendation ? `, “${r.recommendation}”` : ''}${r.scout_name ? `, by ${r.scout_name}` : ''}`;
+  const line = (r) => `• #${r.id} ${r.report_date || 'undated'} – ${r.report_type === 'feedback' ? 'feedback, ' : ''}overall ${r.overall_score ?? '–'}, potential ${r.overall_potential_score ?? '–'}${r.recommendation ? `, “${r.recommendation}”` : ''}${r.scout_name ? `, by ${r.scout_name}` : ''}`;
   if (asc.length < 2) {
     // a very similar name is often the same person under another spelling: point at it
     const words = String(p.player_name).split(/[\s-]+/).filter((w) => w.length >= 3);
@@ -399,15 +408,18 @@ async function compareOwnReports(playerId, rows, out, { message, opts, status, t
 }
 
 function profileHeader(p, reps) {
-  const facts = [p.position, p.team_name, p.location ? `lives in ${p.location}` : null, p.age_group ? `age group ${p.age_group}` : null,
+  const facts = [p.position, p.team_name, p.location ? `lives in ${p.location}` : null, p.age_group ? `age group ${p.age_group}` : p.age_group_label ? `age group ${p.age_group_label}` : null,
     p.strong_foot ? `${p.strong_foot.toLowerCase()} foot` : null].filter(Boolean).join(', ');
   const scouts = [...new Set(reps.map((r) => r.scout_name).filter(Boolean))];
+  const authorWord = reps.length && reps.every((r) => r.report_type === 'feedback') ? (scouts.length > 1 ? 'coaches' : 'coach')
+    : reps.some((r) => r.report_type === 'feedback') ? 'scouts/coaches' : 'scouts';
   const span = p.report_count > 1 ? ` (${p.first_report_date || '?'} → ${p.report_date || '?'})` : p.report_date ? ` (${p.report_date})` : '';
   const change = p.score_change != null ? ` (${p.score_change > 0 ? '+' : ''}${p.score_change} since first report)` : '';
   const latest = p.overall_score != null
     ? `Latest: overall ${p.overall_score}${p.overall_potential_score != null ? `, potential ${p.overall_potential_score}` : ''}${change}${p.recommendation ? `, “${p.recommendation}”` : ''}.`
     : 'No scores recorded yet.';
-  return `**${p.player_name}** – ${facts || 'no details recorded'}. ${plural(p.report_count, 'report')}${span}${scouts.length ? `, scouts: ${scouts.join(', ')}` : ''}. ${latest}${p.x_factor ? ` X-factor: ${p.x_factor}.` : ''}`;
+  const kinds = p.feedback_count ? ` (${p.assessment_count || 0} assessment, ${p.feedback_count} feedback)` : '';
+  return `**${p.player_name}** – ${facts || 'no details recorded'}. ${plural(p.report_count, 'report')}${kinds}${span}${scouts.length ? `, ${authorWord}: ${scouts.join(', ')}` : ''}. ${latest}${p.x_factor ? ` X-factor: ${p.x_factor}.` : ''}`;
 }
 
 /**
@@ -715,7 +727,7 @@ async function answerData(message, planned, opts, timings) {
       assumptions.push(`Sent the ${reps.length} most recent reports (redacted) to the AI for the written summary.`);
       return {
         ...out, players, count: pls.length, sources: reps.map((x) => x.id), sentToLlm: r.ok,
-        answer: r.text ? `${header}\n\n${spec.intent === 'profile' ? 'What the scouts say:\n' : ''}${r.text}` : header,
+        answer: r.text ? `${header}\n\n${spec.intent === 'profile' ? 'What the reports say:\n' : ''}${r.text}` : header,
       };
     }
     default:

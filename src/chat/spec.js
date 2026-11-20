@@ -21,9 +21,9 @@ const FIELDS = {
   stage_of_growth: { col: 'stage_of_growth', kind: 'text', sparse: true, desc: 'physical development stage (early/average/late developed)' },
   location:      { col: 'location', kind: 'text', desc: 'Danish town/municipality the player lives in' },
   team_name:     { col: 'team_name', kind: 'text', desc: 'club / team' },
-  scout_name:    { col: 'scout_name', kind: 'text', desc: 'scout who wrote the report' },
+  scout_name:    { col: 'scout_name', kind: 'text', desc: 'scout or coach who wrote the report (coaches write the feedback reports)' },
   recommendation: { col: 'recommendation', kind: 'text', desc: "scout's recommendation (e.g. Golden Boy!!!)" },
-  age_group:     { col: 'age_group', kind: 'num', desc: 'birth-year cohort, e.g. 2012' },
+  age_group:     { col: 'age_group', kind: 'num', desc: 'birth-year cohort, e.g. 2012 (older players; newer players have age_group_label instead)' },
   year_of_birth: { col: 'year_of_birth', kind: 'num', desc: 'year of birth (rarely recorded: for "born in 2012" use age_group, the birth-year cohort)' },
   jersey_number: { col: 'jersey_number', kind: 'num', sparse: true, desc: 'shirt number' },
   father_height: { col: 'father_height_mid', kind: 'num', sparse: true, desc: "father's height in cm (range midpoint)" },
@@ -37,6 +37,14 @@ const FIELDS = {
   score_tactical:  { col: 'score_tactical', kind: 'num', sparse: true, desc: 'tactical score' },
   score_deadball:  { col: 'score_deadball', kind: 'num', sparse: true, desc: 'set-piece score' },
   score_x_factor:  { col: 'score_x_factor', kind: 'num', sparse: true, desc: 'x-factor score' },
+  report_type:   { col: 'report_type', kind: 'text', desc: 'kind of report: "assessment" (a scout watched one match/day) or "feedback" (a coach about a period of sessions)' },
+  age_group_label: { col: 'age_group_label', kind: 'text', sparse: true, desc: 'age-group label of newer players, e.g. "U13/14" (they have no birth-year age_group)' },
+  competition_level: { col: 'competition_level', kind: 'text', sparse: true, desc: 'competition level of the assessed match' },
+  period_start:  { col: 'period_start', kind: 'date', sparse: true, desc: 'start of the period a feedback report covers' },
+  period_end:    { col: 'period_end', kind: 'date', sparse: true, desc: 'end of the period a feedback report covers' },
+  score_behavioral: { col: 'score_behavioral', kind: 'num', sparse: true, desc: 'behavioral score (feedback reports)' },
+  assessment_count: { col: 'assessment_count', kind: 'num', playerOnly: true, desc: 'how many assessment reports the player has' },
+  feedback_count: { col: 'feedback_count', kind: 'num', playerOnly: true, desc: 'how many feedback reports the player has' },
   report_date:   { col: 'report_date', kind: 'date', desc: 'date of the report (YYYY-MM-DD)' },
   report_year:   { col: 'report_year', kind: 'num', desc: 'year of the report' },
   report_month:  { col: 'report_month', kind: 'text', desc: 'month of the report (YYYY-MM)' },
@@ -47,7 +55,7 @@ const FIELDS = {
 const FILTER_FIELDS = Object.keys(FIELDS);
 const NUM_FIELDS = FILTER_FIELDS.filter((f) => FIELDS[f].kind === 'num');
 const GROUP_FIELDS = ['position', 'secondary_position', 'strong_foot', 'stage_of_growth', 'age_group', 'year_of_birth', 'team_name',
-  'location', 'scout_name', 'recommendation', 'overall_score', 'overall_potential_score', 'gender', 'report_year', 'report_month', 'report_count'];
+  'location', 'scout_name', 'recommendation', 'report_type', 'age_group_label', 'competition_level', 'overall_score', 'overall_potential_score', 'gender', 'report_year', 'report_month', 'report_count'];
 const TIME_GROUPS = new Set(['report_year', 'report_month', 'age_group', 'year_of_birth', 'overall_score', 'overall_potential_score', 'report_count']);
 const SORT_FIELDS = [...NUM_FIELDS, 'report_date', 'first_report_date', 'player_name'];
 
@@ -128,7 +136,8 @@ function normalizeSpec(raw, vocab) {
   const extraText = [];
   // Fields with a fixed list of recorded values: an exact match on a value that is not on the list can never match,
   // so it is searched as free text instead (e.g. "JL Top 18 in Denmark" is written in comments, not a recommendation).
-  const LISTED = { recommendation: vocab.recommendations, stage_of_growth: vocab.stageOfGrowth, strong_foot: vocab.strongFoot };
+  const LISTED = { recommendation: vocab.recommendations, stage_of_growth: vocab.stageOfGrowth, strong_foot: vocab.strongFoot,
+    report_type: vocab.reportTypes, age_group_label: vocab.ageGroupLabels };
   // skill words (whole tag or a word of a tag, e.g. "speed" from "Pace/speed")
   const tagWords = new Set(Object.values(vocab.tags || {}).flat().flatMap((t) => [norm(t.tag), ...norm(t.tag).split(' ').filter((w) => w.length >= 4)]));
   const isPositionWord = (v) => (vocab.positions || []).some((p) => norm(p).includes(norm(v)));

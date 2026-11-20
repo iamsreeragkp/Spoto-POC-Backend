@@ -6,6 +6,7 @@ require('dotenv').config();
 const { Pool, types } = require('pg');
 
 types.setTypeParser(1082, (v) => v); // DATE as 'YYYY-MM-DD'
+types.setTypeParser(1700, (v) => (v == null ? null : parseFloat(v))); // NUMERIC (decimal scores, averages) as numbers // DATE as 'YYYY-MM-DD'
 
 const timeout = Number(process.env.CHAT_STATEMENT_TIMEOUT_MS) || 8000;
 const chatPool = new Pool({

@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const pool = require('../src/db/pool');
 
-const FILES = ['schema.sql', 'chat_schema.sql', 'chat_v2_schema.sql'];
+const FILES = ['schema.sql', 'reports_v3.sql', 'chat_schema.sql', 'chat_v2_schema.sql'];
 
 /** Applies all schema files in order (each is idempotent). */
 async function migrate(db = pool) {
