@@ -112,8 +112,19 @@ const playerLine = (p) => {
   const mins = p.drive_minutes != null ? ` (${Math.round(p.drive_minutes)} min)` : '';
   return `${p.name}${bits ? ` (${bits})` : ''}${score}${mins}`;
 };
+// one line per player in chat answers: bold name, then details, then scores (easier to scan than one long sentence)
+const playerRow = (p) => {
+  const bits = [p.position, p.team_name, p.location].filter(Boolean).join(' · ');
+  const score = p.overall_score != null ? ` – score ${p.overall_score}${p.overall_potential_score != null ? `, potential ${p.overall_potential_score}` : ''}` : '';
+  const mins = p.drive_minutes != null ? ` – ${Math.round(p.drive_minutes)} min drive` : '';
+  return `**${p.name}**${bits ? ` – ${bits}` : ''}${score}${mins}`;
+};
+/** A heading plus one line per item: numbered when the order is a ranking, bullets otherwise. A single item stays inline. */
+const listBlock = (heading, lines, ranked) => (lines.length === 1 ? `${heading}: ${lines[0]}`
+  : `${heading}:
+${lines.map((l, i) => `${ranked ? `${i + 1}.` : '•'} ${l}`).join('\n')}`);
 const kindOf = (r) => (r.report_type === 'feedback' ? `feedback${r.scout_name ? ` by coach ${r.scout_name}` : ''}` : `assessment${r.scout_name ? ` by ${r.scout_name}` : ''}`);
-const reportLine = (r) => `#${r.report_id} ${r.report_date || 'undated'} – ${r.name} (${kindOf(r)})${r.overall_score != null ? `, score ${r.overall_score}` : ''}`;
+const reportLine = (r) => `#${r.report_id} ${r.report_date || 'undated'} – **${r.name}** (${kindOf(r)})${r.overall_score != null ? `, score ${r.overall_score}` : ''}`;
 const round = (v) => (v == null ? '–' : Math.abs(v) >= 100 ? v.toFixed(0) : Number(v.toFixed(2)).toString());
 
 // ---- planning ----
@@ -654,11 +665,14 @@ async function answerData(message, planned, opts, timings) {
       return { ...out, answer: `${approximate ? 'About ' : ''}${plural(exec.count, unitWord)} match${exec.count === 1 ? 'es' : ''}.` };
 
     case 'group_count': {
-      const shown = exec.groups.slice(0, 20).map((g) => `${g.key ?? '(not recorded)'}: ${fmt(g.count)}`);
-      const more = exec.groups.length > 20 ? `; … ${exec.groups.length - 20} more groups` : '';
+      const shown = exec.groups.slice(0, 20).map((g) => `${g.key ?? '(not recorded)'}: **${fmt(g.count)}**`);
+      const more = exec.groups.length > 20 ? `
+… ${exec.groups.length - 20} more groups` : '';
+      const by = spec.group_by === 'scout_name' && spec.filters.some((f) => f.field === 'report_type' && f.value === 'feedback') ? 'coach' : label(spec.group_by).toLowerCase();
       return {
         ...out, groups: exec.groups,
-        answer: exec.count ? `${about}${plural(exec.count, unitWord)} in total. By ${spec.group_by === 'scout_name' && spec.filters.some((f) => f.field === 'report_type' && f.value === 'feedback') ? 'coach' : label(spec.group_by).toLowerCase()} – ${shown.join('; ')}${more}.` : `No ${unitWord}s match.`,
+        answer: exec.count ? `${about}${plural(exec.count, unitWord)} in total.
+${listBlock(`By ${by}`, shown, false)}${more}` : `No ${unitWord}s match.`,
       };
     }
 
@@ -667,10 +681,11 @@ async function answerData(message, planned, opts, timings) {
       const what = `${fnLabel} ${label(spec.aggregate.field).toLowerCase()}`;
       if (exec.groups) {
         const groups = exec.groups.map((g) => ({ key: g.key, count: g.n, value: g.value }));
-        const shown = groups.slice(0, 20).map((g) => `${g.key ?? '(not recorded)'}: ${round(g.value)} (${fmt(g.count)})`);
+        const shown = groups.slice(0, 20).map((g) => `${g.key ?? '(not recorded)'}: **${round(g.value)}** (${fmt(g.count)})`);
         return {
           ...out, groups, aggregate: { ...spec.aggregate, by: spec.group_by },
-          answer: groups.length ? `${what} by ${label(spec.group_by).toLowerCase()} – ${shown.join('; ')}${groups.length > 20 ? '; …' : ''}. (Numbers in brackets: ${unitWord}s with a recorded value.)` : `No ${unitWord}s with a recorded ${label(spec.aggregate.field).toLowerCase()} match.`,
+          answer: groups.length ? `${listBlock(`${what} by ${label(spec.group_by).toLowerCase()}`, shown, false)}${groups.length > 20 ? '\n…' : ''}
+(Numbers in brackets: ${unitWord}s with a recorded value.)` : `No ${unitWord}s with a recorded ${label(spec.aggregate.field).toLowerCase()} match.`,
         };
       }
       const a = exec.agg;
@@ -682,14 +697,20 @@ async function answerData(message, planned, opts, timings) {
 
     case 'list': {
       if (!exec.count) return { ...out, players: [], answer: `No ${unitWord}s match.` };
-      const lines = spec.unit === 'report' ? rows.map(reportLine) : rows.map(playerLine);
+      const lines = spec.unit === 'report' ? rows.map(reportLine) : rows.map(playerRow);
+      const SORT_WORDS = { overall_score: 'overall score', overall_potential_score: 'potential', report_date: 'date', drive_minutes: 'driving time' };
+      const ranked = !!spec.sort && spec.unit === 'player';
+      const rankedBy = ranked ? `, ranked by ${SORT_WORDS[spec.sort.field] || label(spec.sort.field).toLowerCase()}` : '';
       if (spec.top_n && spec.unit === 'player') {
         const key = spec.sort && spec.sort.field === 'overall_potential_score' ? 'potential' : 'overall score';
-        return { ...out, players: rows, answer: `Found ${about}${plural(exec.count, unitWord)}${exec.count > rows.length ? `, showing the top ${rows.length}` : ''}, ranked by ${key}. The best ${Math.min(spec.top_n, rows.length)}: ${lines.slice(0, spec.top_n).join('; ')}.` };
+        const best = Math.min(spec.top_n, rows.length);
+        return { ...out, players: rows, answer: `Found ${about}${plural(exec.count, unitWord)}${exec.count > rows.length ? `, showing the top ${rows.length}` : ''}, ranked by ${key}.
+${listBlock(`The best ${best}`, lines.slice(0, spec.top_n), true)}${rows.length > best ? `
+…the other ${rows.length - best} follow below.` : ''}` };
       }
       return {
         ...out, players: rows,
-        answer: `Found ${about}${plural(exec.count, unitWord)}${exec.count > rows.length ? `, showing the ${hasContent && meaningRes && !spec.sort ? 'best matching' : 'top'} ${rows.length}` : ''}: ${lines.join('; ')}.`,
+        answer: listBlock(`Found ${about}${plural(exec.count, unitWord)}${exec.count > rows.length ? `, showing the ${hasContent && meaningRes && !spec.sort ? 'best matching' : 'top'} ${rows.length}` : ''}${rankedBy}`, lines, ranked),
       };
     }
 
