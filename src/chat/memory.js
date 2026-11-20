@@ -15,7 +15,10 @@ async function loadContext(conversationId) {
      WHERE conversation_id = $1 ORDER BY id DESC LIMIT $2`, [conversationId, TURNS]);
   const turns = rows.reverse();
   const lastData = [...turns].reverse().find((t) => t.route === 'data' && t.spec);
-  return { turns: turns.map(({ spec, ...t }) => t), lastSpec: lastData ? lastData.spec : null };
+  const last = turns[turns.length - 1];
+  // a question waiting for "which player do you mean": its plan, to be resumed with the chosen name
+  const pending = last && last.route === 'clarify' && last.spec && last.spec._pending ? last.spec : null;
+  return { turns: turns.map(({ spec, ...t }) => t), lastSpec: lastData ? lastData.spec : null, pending };
 }
 
 async function saveTurn(conversationId, t) {

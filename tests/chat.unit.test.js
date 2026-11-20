@@ -503,3 +503,16 @@ test('dropTextRepeatingTags: a keyword equal to a tag of the plan is dropped (ta
   const alt = plan([{ fields: ['comment'], any_of: ['speed'] }], 'any');
   assert.equal(dropTextRepeatingTags(alt), alt, 'alternatives (any) are left alone');
 });
+
+test('pickOption: the answer to "which player do you mean" picks one of the offered names', () => {
+  const { pickOption } = require('../src/chat/followup');
+  const opts = ['Jonas Ravn Testsen', 'Jónas Ravnsted Testsen'];
+  assert.equal(pickOption('Jonas Ravn Testsen', opts), 'Jonas Ravn Testsen');
+  assert.equal(pickOption('I mean Jónas Ravnsted Testsen', opts), 'Jónas Ravnsted Testsen');
+  assert.equal(pickOption('Ravnsted', opts), 'Jónas Ravnsted Testsen');
+  assert.equal(pickOption('the first one', opts), 'Jonas Ravn Testsen');
+  assert.equal(pickOption('2', opts), 'Jónas Ravnsted Testsen');
+  assert.equal(pickOption('the last one', opts), 'Jónas Ravnsted Testsen');
+  assert.equal(pickOption('Testsen', opts), null, 'a word both names share decides nothing');
+  assert.equal(pickOption('how many strikers are there?', opts), null);
+});

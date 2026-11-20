@@ -274,4 +274,24 @@ function dropTextRepeatingTags(result) {
   return changed ? { ...result, spec: { ...s, text } } : result;
 }
 
-module.exports = { dropTextRepeatingTags, mergePositionAlternatives, reportTypeFromWords, showAllThenRank, ensureFootFilter, scoutsOfPreviousPlayers, focusSetFromContext, rankAmongPlayers, addToPreviousSet, nameFiltersNeedAName, explainToAnalysis, toCompareReports, carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, REFERS_BACK };
+// The answer to "Which player do you mean by X: A, B?" -> the chosen option (full name, a distinctive part, or "the first one"), else null.
+const ORDINALS = [/\b(?:first|1st|one)\b|^\s*1\s*$/i, /\b(?:second|2nd|two)\b|^\s*2\s*$/i, /\b(?:third|3rd|three)\b|^\s*3\s*$/i];
+function pickOption(message, options) {
+  if (!message || !options || !options.length) return null;
+  const { foldText } = require('./fold');
+  const m = foldText(message).replace(/[^\p{L}\p{N}\s-]/gu, ' ').replace(/\s+/g, ' ').trim();
+  const folded = options.map((o) => foldText(o));
+  const exact = folded.findIndex((o) => m === o || m.includes(o));
+  if (exact >= 0) return options[exact];
+  const words = m.split(/[\s-]+/).filter((w) => w.length >= 3 && !/^(the|one|player|mean|meant|with|him|her)$/.test(w));
+  if (words.length) {
+    const hits = folded.map((o, i) => (words.every((w) => o.split(/[\s-]+/).includes(w)) ? i : -1)).filter((i) => i >= 0);
+    if (hits.length === 1) return options[hits[0]];
+    if (hits.length > 1) return null;
+  }
+  if (/\blast\b/i.test(message)) return options[options.length - 1];
+  const ord = ORDINALS.findIndex((re) => re.test(message));
+  return ord >= 0 && ord < options.length ? options[ord] : null;
+}
+
+module.exports = { pickOption, dropTextRepeatingTags, mergePositionAlternatives, reportTypeFromWords, showAllThenRank, ensureFootFilter, scoutsOfPreviousPlayers, focusSetFromContext, rankAmongPlayers, addToPreviousSet, nameFiltersNeedAName, explainToAnalysis, toCompareReports, carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, REFERS_BACK };

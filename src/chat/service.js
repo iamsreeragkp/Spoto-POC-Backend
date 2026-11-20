@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const chatPool = require('../db/chatPool');
 const { getLlm } = require('./llm');
 const { normalizePlan, SpecError, FIELDS } = require('./spec');
-const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, toCompareReports, explainToAnalysis, nameFiltersNeedAName, mergePositionAlternatives, dropTextRepeatingTags, rankAmongPlayers, addToPreviousSet, focusSetFromContext, scoutsOfPreviousPlayers, ensureFootFilter, showAllThenRank, reportTypeFromWords } = require('./followup');
+const { carryFollowUp, defaultTextScope, collapseNameFilters, defaultRecommendationScope, mergeAdjacentNames, toCompareReports, explainToAnalysis, nameFiltersNeedAName, pickOption, mergePositionAlternatives, dropTextRepeatingTags, rankAmongPlayers, addToPreviousSet, focusSetFromContext, scoutsOfPreviousPlayers, ensureFootFilter, showAllThenRank, reportTypeFromWords } = require('./followup');
 const { foldText, foldSql, containsPattern, editDistance } = require('./fold');
 const { getMasker, aliasPlayer } = require('./privacy');
 const { getVocabulary, invalidateVocabulary } = require('./vocabulary');
@@ -443,7 +443,11 @@ async function ask(message, opts = {}) {
   ]);
   let planned;
   const typo = await typoInMessage(message, vocab).catch((e) => { console.error('typo check failed:', e.message); return null; });
-  if (typo) {
+  const chosen = context.pending && pickOption(message, context.pending._pending.options);
+  if (chosen) { // "Which player do you mean by X?" answered: rerun that question with the chosen player
+    const { _pending: pend, ...spec } = context.pending;
+    planned = { route: 'data', spec: { ...spec, players: spec.players.map((p) => (p === pend.name ? chosen : p)) }, warnings: pend.warnings, planCached: false };
+  } else if (typo) {
     planned = { route: 'clarify', reply: typo, spec: null, planCached: false };
   } else {
     try {
@@ -529,9 +533,10 @@ async function answerData(message, planned, opts, timings) {
   // ---- named players ----
   if (spec.players.length) {
     const r = await resolvePlayers(spec.players);
-    if (r.ambiguous.length && !r.ids.length) {
+    // a comparison with one name dropped would silently become "one player over time": ask instead
+    if (r.ambiguous.length && (!r.ids.length || spec.intent === 'compare')) {
       const a = r.ambiguous[0];
-      return { ...base, route: 'clarify', answer: `Which player do you mean by “${a.name}”: ${a.options.join(', ')}?`, count: null };
+      return { ...base, spec: { ...planned.spec, _pending: { name: a.name, options: a.options, warnings: planned.warnings || [] } }, route: 'clarify', answer: `Which player do you mean by “${a.name}”: ${a.options.join(', ')}?`, count: null };
     }
     const didYouMean = (m) => (r.suggestions && r.suggestions[m] ? ` Did you mean ${r.suggestions[m].join(', ')}?` : '');
     if (!r.ids.length) return { ...base, answer: `I couldn't find a player called ${r.missing.map((m) => `“${m}”`).join(' or ')}.${r.missing.map(didYouMean).join('')}`, count: 0 };
@@ -635,7 +640,7 @@ async function answerData(message, planned, opts, timings) {
       const more = exec.groups.length > 20 ? `; … ${exec.groups.length - 20} more groups` : '';
       return {
         ...out, groups: exec.groups,
-        answer: exec.count ? `${about}${plural(exec.count, unitWord)} in total. By ${label(spec.group_by).toLowerCase()} – ${shown.join('; ')}${more}.` : `No ${unitWord}s match.`,
+        answer: exec.count ? `${about}${plural(exec.count, unitWord)} in total. By ${spec.group_by === 'scout_name' && spec.filters.some((f) => f.field === 'report_type' && f.value === 'feedback') ? 'coach' : label(spec.group_by).toLowerCase()} – ${shown.join('; ')}${more}.` : `No ${unitWord}s match.`,
       };
     }
 
